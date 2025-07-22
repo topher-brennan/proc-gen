@@ -2,6 +2,7 @@ use rand::Rng;
 use image::{ImageBuffer, Rgb};
 use std::time::Instant;
 use std::cmp::max;
+use rayon::prelude::*;
 
 const HEIGHT_PIXELS: u16 = 2160;
 const WIDTH_PIXELS: u16 = 3840;
@@ -18,12 +19,12 @@ const HEX_FACTOR: f32 = 0.8660254037844386;
 // Assume 1 pixel per hex vertically, and HEX_FACTOR pixels per hex horizontally.
 const WIDTH_HEXAGONS: u16 = 4434;
 
-const SEA_LEVEL: u16 = 17736; // Feet
+const SEA_LEVEL: f32 = 17736.0; // Feet
 const FAR_SOUTH_RANGE_START: u16 = 1420;
 
 struct Hex {
     coordinate: (u16, u16),
-    elevation: u16, // Feet
+    elevation: f32, // Feet
     water_depth: f32, // Feet of water currently stored in this hex
 }
 
@@ -65,12 +66,12 @@ fn filter_coordinates(coordinates: Vec<(u16, u16)>) -> Vec<(u16, u16)> {
     filtered
 }
 
-fn elevation_to_color(elevation: u16) -> Rgb<u8> {
+fn elevation_to_color(elevation: f32) -> Rgb<u8> {
     if elevation < SEA_LEVEL {
         // Water: varying shades of blue
         let depth = SEA_LEVEL - elevation;
         let max_depth = SEA_LEVEL; // Assuming minimum elevation is 0
-        let normalized_depth = (depth as f32 / max_depth as f32).min(1.0);
+        let normalized_depth = (depth / max_depth).min(1.0);
         
         // Create a smooth blue gradient from light blue (near coast) to dark blue (deep water)
         // Invert the depth so shallow water is lighter
@@ -83,7 +84,7 @@ fn elevation_to_color(elevation: u16) -> Rgb<u8> {
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
         let land_height = elevation - SEA_LEVEL;
-        let max_land_height = SEA_LEVEL * 2; // Adjust this based on your terrain range
+        let max_land_height = SEA_LEVEL * 2.0; // Adjust this based on your terrain range
         let normalized_height = (land_height as f32 / max_land_height as f32).min(1.0);
         
         if normalized_height < 0.2 {
@@ -137,18 +138,24 @@ fn simulate_rainfall(hex_map: &mut Vec<Vec<Hex>>, steps: u32, rain_per_step: f32
 
     let mut total_outflow = 0.0f32;
 
+    // Reusable buffer for next water depths
+    let mut next_water: Vec<Vec<f32>> = (0..height)
+        .map(|_| vec![0.0f32; width])
+        .collect();
+
     for _step in 0..steps {
         println!("Step: {}", _step);
-        // 1) Add rainfall uniformly
-        for row in hex_map.iter_mut() {
-            for hex in row.iter_mut() {
+        // 1) Add rainfall uniformly (parallel over rows)
+        hex_map.par_iter_mut().for_each(|row| {
+            for hex in row {
                 hex.water_depth += rain_per_step;
             }
-        }
+        });
 
-        // 2) Route water once (instantaneous transfer to lowest neighbour)
-        let mut next_water: Vec<Vec<f32>> = vec![vec![0.0; width]; height];
+        // 2) Clear reusable next_water buffer in parallel
+        next_water.par_iter_mut().for_each(|row| row.fill(0.0));
 
+        // 3) Route water once (sequential for now – write conflicts are tricky to parallelise safely)
         for y in 0..height {
             for x in 0..width {
                 let cell = &hex_map[y][x];
@@ -157,13 +164,13 @@ fn simulate_rainfall(hex_map: &mut Vec<Vec<Hex>>, steps: u32, rain_per_step: f32
                     continue;
                 }
 
-                let mut min_height = cell.elevation as f32 + cell.water_depth;
+                let mut min_height = cell.elevation + cell.water_depth;
                 let mut target: Option<(usize, usize)> = None;
 
                 let neighbours = hex_neighbors((x as u16, y as u16));
                 for (nx, ny) in neighbours {
                     let n_hex = &hex_map[ny as usize][nx as usize];
-                    let neighbour_height = n_hex.elevation as f32 + n_hex.water_depth;
+                    let neighbour_height = n_hex.elevation + n_hex.water_depth;
                     if neighbour_height < min_height {
                         min_height = neighbour_height;
                         target = Some((nx as usize, ny as usize));
@@ -184,7 +191,7 @@ fn simulate_rainfall(hex_map: &mut Vec<Vec<Hex>>, steps: u32, rain_per_step: f32
             }
         }
 
-        // 3) Apply next water depths, counting outflow at sea boundary (x == 0)
+        // 4) Apply next water depths, counting outflow at sea boundary (x == 0)
         for y in 0..height {
             for x in 0..width {
                 let new_w = next_water[y][x];
@@ -231,8 +238,8 @@ fn main() {
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         for x in 0..WIDTH_HEXAGONS {
-            let x_based_elevation = x * 4 + SEA_LEVEL / 2;
-            let mut far_south_bonus = 0;
+            let x_based_elevation = (x as f32) * 4.0 + SEA_LEVEL / 2.0;
+            // let mut far_south_bonus = 0;
             // TODO: Revisit this, currently finding it unsatisfying.
             // if y > FAR_SOUTH_RANGE_START {
             //     far_south_bonus = (y - FAR_SOUTH_RANGE_START) * 12;
@@ -240,7 +247,7 @@ fn main() {
             //         println!("x_based_elevation: {}, far_south_bonus: {}", x_based_elevation, far_south_bonus);
             //     }
             // }
-            hex_map[y as usize].push(Hex { coordinate: (x, y), elevation: x_based_elevation + far_south_bonus + rng.gen_range(0..48),
+            hex_map[y as usize].push(Hex { coordinate: (x, y), elevation: x_based_elevation + (rng.gen_range(0..48) as f32),
                 water_depth: 0.0,
             });
         }
