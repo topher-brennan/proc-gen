@@ -10,6 +10,12 @@ Memory considerations for design: I'm developing this on a PC with 16GB ram. Clo
 
 Other system notes: I've got a 12GB graphics card with a NVIDIA GPU that could maybe be leveraged?
 
+## Experimental Notes
+
+When first implementing rain, I found it took a surprisingly long time for water to reach equilibrium. With a map 148 hexes wide, it takes ~82,000 steps for mean water level to reach the point where ~99% of water coming in is going out, and not fully stabilized after 148,000 steps. With no rain and the only water coming from a single "river source" hex, my impression was that it stabilizes sooner, after around maybe 23,000 steps, but that *might* be an illusion created by rounding errors and the fact that having all water come in at a single point creates more room for randomness to create temporary plateaus.
+
+My hope is that when errosion is implemented stabilization will be faster.
+
 ## High-Level Strategy: Sea-to-River Erosion & Deposition Model
 
 The goal is to evolve a hex-grid terrain until realistic landforms emerge under the combined influence of:
@@ -59,11 +65,29 @@ Key building blocks
 
 Suggested incremental milestones
 --------------------------------
-1. Pure rainfall + fixed sea (no east river) – verify coastal erosional equilibrium.
-2. Add east river without sediment – ensure channelisation and delta progradation occur.
-3. Introduce sediment load and capacity model – look for emergent levees & mouth bars.
-4. Enable grain-size split & cohesive rules – test bifurcation frequency vs. published DeltaRCM results.
-5. Layer in lakes by activating ponding algorithm & evaporation.
+Our working roadmap is intentionally incremental so each stage can be tested in a few-minute run.
+
+1. **Hydrology sanity-check (done)**  
+   Uniform rainfall over the whole domain + a fixed sea along the west edge.  
+   Goal: make sure water routes to the coast and the mass balance (rain = out-flow + Δstorage) stays within floating-point error.
+
+2. **Add controlled inflow (next up)**  
+   Inject a steady discharge at one or two cells on the east edge to represent a major river.  
+   Goal: confirm the hydrograph (rain + river = out-flow) and produce a channelised river path that will later carry sediment.
+
+3. **Minimal erosion / deposition**  
+   Add a single suspended-load scalar per hex and use a simple capacity rule
+   `capacity = k_c * discharge * slope`, with erosion if load<capacity and deposition otherwise.  
+   Goal: see channels incise into the synthetic slope and tiny fans build at the coast.
+
+4. **Two-fraction sediment & cohesion**  
+   Split the load into “sand” and “mud”, give mud a higher erosion threshold so it travels farther.  
+   Goal: natural levees, mouth-bar bifurcation, delta progradation that depends on grain size.
+
+5. **Lake formation / ponding (optional)**  
+   Implement a priority-flood depression fill so enclosed basins spill once the water surface reaches the lowest saddle.
+
+Each stage keeps run-time and memory roughly constant; only new per-hex fields are added when necessary.
 
 Reading list
 ------------
