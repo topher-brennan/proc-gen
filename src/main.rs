@@ -74,6 +74,8 @@ fn filter_coordinates(coordinates: Vec<(u16, u16)>) -> Vec<(u16, u16)> {
 
 fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
     if elevation < SEA_LEVEL {
+        // TODO: We might want to replace this with something that can be easily distinguished from actual indicators
+        // of water depth, say purple, so that we can see where there's dry land below sea level.
         // Water: varying shades of blue
         let depth = SEA_LEVEL - elevation;
         let max_depth = SEA_LEVEL; // Assuming minimum elevation is 0
@@ -93,39 +95,43 @@ fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
         let max_land_height = max_elevation - SEA_LEVEL;
         let normalized_height = (land_height as f32 / max_land_height as f32).min(1.0);
         
-        if normalized_height < 0.2 {
+        if normalized_height < 0.225 {
             // Green to yellow
-            let factor = normalized_height / 0.2;
+            let factor = normalized_height / 0.225;
             let green = 255;
             let red = (255.0 * factor) as u8;
             let blue = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.4 {
-            // Yellow (255,255,0) → Orange (255,165,0)
-            let factor = (normalized_height - 0.2) / 0.2; // 0..1
+        } else if normalized_height < 0.45 {
+            // Yellow (255,255,0) → Orange (255,127,0)
+            let factor = (normalized_height - 0.225) / 0.225; // 0..1
             let red   = 255;
-            let green = (165.0 + 90.0 * (1.0 - factor)) as u8; // 255→165
+            let green = (127.0 + 128.0 * (1.0 - factor)) as u8; // 255→127
             let blue  = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.6 {
-            // Orange (255,165,0) to Red (255,0,0)
-            let factor = (normalized_height - 0.4) / 0.2; // 0..1
+        // TODO: The later stages of this transition don't subjectively look right to me,
+        // is there some standard way to do this?
+        } else if normalized_height < 0.675 {
+            // Orange (255,127,0) to Red (255,0,0)
+            let factor = (normalized_height - 0.45) / 0.225; // 0..1
             let red = 255;
-            let green = (165.0 * (1.0 - factor)) as u8; // 165→0
+            let green = (127.0 * (1.0 - factor)) as u8; // 127→0
             let blue = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.8 {
+        } else if normalized_height < 0.9 {
             // Red to brown
-            let factor = (normalized_height - 0.6) / 0.2;
-            let red = 255;
-            let green = (100.0 * factor) as u8;
-            let blue = (50.0 * factor) as u8;
+            let factor = (normalized_height - 0.675) / 0.225;
+            let red = 62 + (193.0 * (1.0 - factor)) as u8; // 255→62
+            let green = 28 * factor as u8;
+            let blue = 0;
             Rgb([red, green, blue])
         } else {
             // Brown to white
-            let factor = (normalized_height - 0.8) / 0.2;
-            let intensity = (200.0 + 55.0 * factor) as u8;
-            Rgb([intensity, intensity, intensity])
+            let factor = (normalized_height - 0.9) / 0.1;
+            let red = 62 + (193.0 * factor) as u8; // 62→255
+            let green = 28 + (237.0 * factor) as u8;
+            let blue = (255.0 * factor) as u8;
+            Rgb([red, green, blue])
         }
     }
 }
@@ -188,30 +194,38 @@ fn simulate_rainfall(
                     continue;
                 }
 
-                // Fractional routing: share discharge among *all* lower neighbours
-                let cell_height = cell.elevation + cell.water_depth;
-                let mut weights: Vec<(usize, usize, f32)> = Vec::with_capacity(6);
-                let mut total_w = 0.0;
+                let mut min_height = cell.elevation as f32 + cell.water_depth;
+                let mut target: Option<(usize, usize)> = None;
 
                 let neighbours = hex_neighbors((x as u16, y as u16));
                 for (nx, ny) in neighbours {
                     let n_hex = &hex_map[ny as usize][nx as usize];
                     let neighbour_height = n_hex.elevation + n_hex.water_depth;
-                    if neighbour_height < cell_height {
-                        let drop = cell_height - neighbour_height;
-                        weights.push((nx as usize, ny as usize, drop));
-                        total_w += drop;
+                    if neighbour_height < min_height {
+                        min_height = neighbour_height;
+                        target = Some((nx as usize, ny as usize));
                     }
                 }
 
-                if total_w > 0.0 {
-                    for &(nx, ny, drop) in &weights {
-                        let frac = drop / total_w;
-                        next_water[ny][nx] += w * frac;
+                // TODO: In this version of the code, we're moving either all water, or no water,
+                // will test this to see how it works but could lead to some strange behavior.
+                match target {
+                    Some((tx, ty)) => {
+                        let target_hex = &hex_map[ty][tx];
+                        let diff = cell.elevation + w - (target_hex.elevation + target_hex.water_depth);
+                        if diff / 2.0 > w {
+                            // Avoid moving more water than is available.
+                            next_water[ty][tx] += w;
+                        } else {
+                            // Attempt to equalize the water levels of the two hexes.
+                            next_water[ty][tx] += diff / 2.0;
+                            next_water[y][x] += w - diff / 2.0;
+                        }
                     }
-                } else {
-                    // No strictly lower neighbour: retain water for now
-                    next_water[y][x] += w;
+                    None => {
+                        // No lower neighbour; water stays put
+                        next_water[y][x] += w;
+                    }
                 }
             }
         }
@@ -221,10 +235,16 @@ fn simulate_rainfall(
             for x in 0..width {
                 let new_w = next_water[y][x];
                 if x == 0 {
-                    // Outflow to sea
-                    total_outflow += new_w; // * HEX_SIZE * HEX_SIZE * HEX_FACTOR;
-                    step_outflow += new_w; // * HEX_SIZE * HEX_SIZE * HEX_FACTOR;
-                    hex_map[y][x].water_depth = 0.0;
+                    // West edge: ocean boundary keeps water_surface = SEA_LEVEL
+                    let target_depth = (SEA_LEVEL - hex_map[y][x].elevation).max(0.0);
+                    // Any water above that level leaves the domain
+                    if new_w > target_depth {
+                        let surplus = new_w - target_depth;
+                        total_outflow += surplus;
+                        step_outflow += surplus;
+                    }
+                    // Set water depth to ocean equilibrium
+                    hex_map[y][x].water_depth = target_depth;
                 } else {
                     hex_map[y][x].water_depth = new_w;
                 }
@@ -278,6 +298,9 @@ fn simulate_rainfall(
             );
         }
     }
+
+    // Get final frame so it can be saved later.
+    render_frame(hex_map, frame_buffer, river_y, max_elevation);
 
     let water_remaining: f32 = hex_map
         .iter()
@@ -366,8 +389,18 @@ fn main() {
             //         println!("x_based_elevation: {}, far_south_bonus: {}", x_based_elevation, far_south_bonus);
             //     }
             // }
-            hex_map[y as usize].push(Hex { coordinate: (x, y), elevation: x_based_elevation + (rng.gen_range(0..24) as f32),
-                water_depth: 0.0,
+            let elevation = x_based_elevation + (rng.gen_range(0..24) as f32);
+            let mut water_depth = 0.0;
+            // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
+            // starting with zero water, I could probably do something fancier with pathfinding to guarantee
+            // hexes start with water IFF they have a path to the sea.
+            if x_based_elevation + 24.0 < SEA_LEVEL {
+                water_depth = SEA_LEVEL - elevation;
+            }
+            hex_map[y as usize].push(Hex {
+                coordinate: (x, y),
+                elevation: elevation,
+                water_depth: water_depth,
             });
         }
     }

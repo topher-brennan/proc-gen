@@ -67,13 +67,15 @@ Suggested incremental milestones
 --------------------------------
 Our working roadmap is intentionally incremental so each stage can be tested in a few-minute run.
 
+TODO: At some point we need to implement having an ocean at the west end of the map, rather than just conveying where the ocean should be through colorization. 
+
 1. **Hydrology sanity-check (done)**  
    Uniform rainfall over the whole domain + a fixed sea along the west edge.  
    Goal: make sure water routes to the coast and the mass balance (rain = out-flow + Δstorage) stays within floating-point error.
 
 2. **Add controlled inflow (next up)**  
    Inject a steady discharge at one or two cells on the east edge to represent a major river.  
-   Goal: confirm the hydrograph (rain + river = out-flow) and produce a channelised river path that will later carry sediment.
+   Goal: confirm the hydrograph (rain + river = out-flow).
 
 3. **Minimal erosion / deposition**  
    Add a single suspended-load scalar per hex and use a simple capacity rule
