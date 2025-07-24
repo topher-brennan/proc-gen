@@ -18,6 +18,8 @@ My hope is that when errosion is implemented stabilization will be faster.
 
 Update: stabilization doesn't seem faster with errosion. With a map 296 hexes wide, takes almost ~100,000 steps to stabilize. Want a model that allows for 8,000+ feet of errosion in some reasonable timeframe.
 
+Update 2: With HEIGHT_PIXELS = 216 and WIDTH_PIXELS = 384, 10 rounds took ~380s.
+
 ## High-Level Strategy: Sea-to-River Erosion & Deposition Model
 
 The goal is to evolve a hex-grid terrain until realistic landforms emerge under the combined influence of:

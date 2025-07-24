@@ -28,8 +28,8 @@ const SEA_LEVEL: f32 = (WIDTH_HEXAGONS as f32) * 4.0;
 const HEX_SIZE: f32 = 2640.0; // Feet
 // One hour worth of average discharge from the Aswan Dam.
 const RIVER_DEPTH_PER_STEP: f32 = 37.1; // Feet
-// Basically desert conditions
-const RAIN_PER_STEP: f32 = 0.000_003_08 * RIVER_DEPTH_PER_STEP; // Feet
+// One inch of rain per year - desert conditions.
+const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
 const STEP_MULTIPLIER: u32 = 10;
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
