@@ -26,11 +26,12 @@ const WIDTH_HEXAGONS: u16 = (WIDTH_PIXELS as f32 / HEX_FACTOR) as u16;
 const SEA_LEVEL: f32 = (WIDTH_HEXAGONS as f32) * 4.0;
 // This can be used to convert volume from foot-hexes to cubic feet.
 const HEX_SIZE: f32 = 2640.0; // Feet
-// const FAR_SOUTH_RANGE_START: u16 = 1420;
-const RIVER_DEPTH_PER_STEP: f32 = HEX_SIZE / 100.0; // Feet
+// One hour worth of average discharge from the Aswan Dam.
+const RIVER_DEPTH_PER_STEP: f32 = 37.1; // Feet
 // Basically desert conditions
 const RAIN_PER_STEP: f32 = 0.000_003_08 * RIVER_DEPTH_PER_STEP; // Feet
 const STEP_MULTIPLIER: u32 = 1000;
+const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
 // Questioning the decision to divide by HEX_SIZE in errosion calculations.
@@ -84,30 +85,31 @@ fn filter_coordinates(coordinates: Vec<(u16, u16)>) -> Vec<(u16, u16)> {
 }
 
 fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
-    if elevation < SEA_LEVEL / 2.0 {
-        // Clearly mark where errosion has lowered elevation below the lowest possible initial elevation.
-        Rgb([0, 0, 0])
-    } else if elevation < SEA_LEVEL {
-        // TODO: We might want to replace this with something that can be easily distinguished from actual indicators
-        // of water depth, say purple, so that we can see where there's dry land below sea level.
-        // Water: varying shades of blue
-        let depth = SEA_LEVEL - elevation;
-        let max_depth = SEA_LEVEL; // Assuming minimum elevation is 0
-        let normalized_depth = (depth / max_depth).min(1.0);
-        
-        // Create a smooth blue gradient from light blue (near coast) to dark blue (deep water)
-        // Invert the depth so shallow water is lighter
-        let shallow_factor = 1.0 - normalized_depth;
-        let blue_intensity = (100.0 + 155.0 * shallow_factor) as u8;
-        let green_intensity = (100.0 + 50.0 * shallow_factor) as u8;
-        let red_intensity = (50.0 + 20.0 * shallow_factor) as u8;
-        
-        Rgb([red_intensity, green_intensity, blue_intensity])
+    if elevation < SEA_LEVEL {
+        let normalized_elevation = (elevation / SEA_LEVEL).min(1.0);
+        if normalized_elevation < 0.5 {
+            // Clearly mark where errosion has lowered elevation below the lowest possible initial elevation.
+            Rgb([0, 0, 0])
+        } else if normalized_elevation < 0.75 {
+            // Black to purple
+            let factor = (normalized_elevation - 0.5) / 0.25;
+            let red = 128 * factor as u8;
+            let green = 0;
+            let blue = 128 * factor as u8;
+            Rgb([red, green, blue])
+        } else {
+            // Purple to light blue
+            let factor = (normalized_elevation - 0.75) / 0.25;
+            let red = 128;
+            let green = 255 * factor as u8;
+            let blue = 128 + (127.0 * factor) as u8;
+            Rgb([red, green, blue])
+        }
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
         let land_height = elevation - SEA_LEVEL;
         let max_land_height = max_elevation - SEA_LEVEL;
-        let normalized_height = (land_height as f32 / max_land_height as f32).min(1.0);
+        let normalized_height = (land_height / max_land_height).min(1.0);
         
         if normalized_height < 0.225 {
             // Green to yellow
@@ -159,8 +161,6 @@ fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
 fn simulate_rainfall(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
-    rain_per_step: f32,
-    river_depth_per_step: f32,
     river_y: usize,
     frame_buffer: &mut Vec<u32>,
 ) {
@@ -184,8 +184,8 @@ fn simulate_rainfall(
 
     for _step in 0..steps {
         // Mass balance stats per step
-        let rainfall_added = (width * height) as f32 * rain_per_step;
-        let mut river_added = 0.0f32;
+        let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
+        let river_added = 0.0f32;
         let mut step_outflow = 0.0f32;
 
         let mut step_eroded    = 0.0f32;   // total bed material removed this step
@@ -194,16 +194,16 @@ fn simulate_rainfall(
         // 1) Add rainfall uniformly (parallel over rows)
         hex_map.par_iter_mut().for_each(|row| {
             for hex in row {
-                hex.water_depth += rain_per_step;
+                // TODO: Add some randomness to the rainfall.
+                hex.water_depth += RAIN_PER_STEP;
             }
         });
 
         // 1b) Add river inflow at east edge (x = WIDTH_HEXAGONS-1)
         if river_y < height {
-            hex_map[river_y][WIDTH_HEXAGONS as usize - 1].water_depth += river_depth_per_step;
-            river_added = river_depth_per_step;
+            hex_map[river_y][WIDTH_HEXAGONS as usize - 1].water_depth += RIVER_DEPTH_PER_STEP;
 
-            let suspended_load_per_step = river_depth_per_step * 0.427 * KC / HEX_SIZE;
+            let suspended_load_per_step = RIVER_DEPTH_PER_STEP * 0.427 * KC / HEX_SIZE;
             hex_map[river_y][WIDTH_HEXAGONS as usize - 1].suspended_load += suspended_load_per_step;
             step_eroded += suspended_load_per_step;
         }
@@ -317,7 +317,10 @@ fn simulate_rainfall(
             }
         }
 
-        if _step % 1000 == 0 {
+        // 4b) Angle-of-repose adjustment (slope limit)
+        enforce_angle_of_repose(hex_map);
+
+        if _step % (WIDTH_HEXAGONS as u32) == 0 {
             let cells_above_sea_level: usize = hex_map
                 .par_iter()
                 .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL).count())
@@ -353,7 +356,7 @@ fn simulate_rainfall(
 
             let wet_cells: usize = hex_map
                 .par_iter()
-                .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL && h.water_depth > 0.05).count())
+                .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL && h.water_depth > WATER_THRESHOLD).count())
                 .sum();
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
@@ -388,6 +391,39 @@ fn simulate_rainfall(
         "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes",
         steps, total_outflow, water_remaining
     );
+}
+
+//---------------------------------------------------------------------
+// Enforce that no cell is more than HEX_SIZE ft higher than any neighbour
+//---------------------------------------------------------------------
+fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>) {
+    let height = hex_map.len();
+    let width = hex_map[0].len();
+
+    // temp elevation changes
+    let mut delta: Vec<Vec<f32>> = vec![vec![0.0; width]; height];
+
+    for y in 0..height {
+        for x in 0..width {
+            let elev = hex_map[y][x].elevation;
+            for (nx, ny) in hex_neighbors((x as u16, y as u16)) {
+                let nelev = hex_map[ny as usize][nx as usize].elevation;
+                let diff = elev - nelev;
+                if diff > HEX_SIZE {
+                    let excess = (diff - HEX_SIZE) / 2.0; // move half each way
+                    delta[y][x]      -= excess;
+                    delta[ny as usize][nx as usize] += excess;
+                }
+            }
+        }
+    }
+
+    // Apply deltas
+    for y in 0..height {
+        for x in 0..width {
+            hex_map[y][x].elevation += delta[y][x];
+        }
+    }
 }
 
 fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
@@ -456,7 +492,7 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], _river_y: usize) {
 
             let hex = &hex_map[hex_y as usize][hex_x as usize];
             // Choose colour – highlight water depth strongly so it stands out
-            let color = if hex.water_depth > 0.05 {
+            let color = if hex.water_depth > WATER_THRESHOLD {
                 // Strong blue for water for debugging
                 let blue = 255u8;
                 let g = 0u8;
@@ -480,23 +516,25 @@ fn main() {
 
     // Time hex map creation
     let hex_start = Instant::now();
+    let river_y = (0.29 * HEIGHT_PIXELS as f32) as usize;
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         for x in 0..WIDTH_HEXAGONS {
-            let x_based_elevation = (x as f32) * 4.0 + SEA_LEVEL / 2.0;
-            // let mut far_south_bonus = 0;
-            // TODO: Revisit this. The idea was to have a mountian range at the south end of the map, but I found
-            // my initial attempts unsatisfying.
-            // if y > FAR_SOUTH_RANGE_START {
-            //     far_south_bonus = (y - FAR_SOUTH_RANGE_START) * 12;
-            //     if x == 0 {
-            //         println!("x_based_elevation: {}, far_south_bonus: {}", x_based_elevation, far_south_bonus);
-            //     }
-            // }
-            let mut elevation = x_based_elevation + rng.gen_range(0.0..HEX_SIZE/100.0);
-            if y == 0 || y == HEIGHT_PIXELS - 1 {
-                // Try to prevent weird artifacts at the edges of the map.
-                elevation += 4.0;
+            let mut southern_multiplier = 1.0;
+            let southern_threshold = (river_y + 276) as u16;
+            if y > southern_threshold {
+                southern_multiplier += 0.5 * ((y - southern_threshold) as f32 / 1518.0).max(0.0);
+            }
+
+            let x_based_elevation = (x as f32) * 4.0 * southern_multiplier + SEA_LEVEL / 2.0;
+
+            let mut elevation = x_based_elevation;
+            if y == 0 || y == HEIGHT_PIXELS - 1 || x == WIDTH_HEXAGONS - 1 {
+                // Try to prevent weird artifacts at the edges of the map. Not applied to western edge because
+                // we have the outflow mechanic there.
+                elevation += rng.gen_range(HEX_SIZE/200.0..HEX_SIZE/100.0);
+            } else {
+                elevation += rng.gen_range(0.0..HEX_SIZE/100.0);
             }
             let mut water_depth = 0.0;
             // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
@@ -523,9 +561,7 @@ fn main() {
     // River silt should be 0.00245 * river water
     // Or maybe 0.427 * KC * river water? (Idea is to have incoming water be saturated with silt assuming slope is a little over 0.4 feet per hex)
     // Maybe KC should be around 0.00574 to harmonize these?
-    // river_y should be around 0.29 * HEIGHT_PIXELS
-    let river_y = (0.29 * HEIGHT_PIXELS as f32) as usize;
-    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * STEP_MULTIPLIER, RAIN_PER_STEP, RIVER_DEPTH_PER_STEP, river_y, &mut frame_buffer);
+    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * STEP_MULTIPLIER, river_y, &mut frame_buffer);
 
     // Count final blue pixels for quick sanity check
     let final_blue = frame_buffer
