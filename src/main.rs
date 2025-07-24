@@ -4,6 +4,30 @@ use std::time::Instant;
 use rayon::prelude::*;
 use image::{RgbImage};
 
+// -----------------------------------------------------------------------------
+// Neighbour offsets for axial "columns-lined" hex layout
+// -----------------------------------------------------------------------------
+// Even and odd columns have mirrored vertical diagonals.
+// We store them once to avoid repeat allocation in tight loops.
+
+const NEIGH_OFFSETS_EVEN: [(i16, i16); 6] = [
+    (1, 0),  // 4 o'clock (east)
+    (0, 1),  // 6 o'clock (south)
+    (-1, 0), // 8 o'clock (west)
+    (0, -1), // 12 o'clock (north)
+    (-1, -1),// 10 o'clock (north-west)
+    (1, -1), // 2 o'clock (north-east)
+];
+
+const NEIGH_OFFSETS_ODD: [(i16, i16); 6] = [
+    (1, 0),  // 2 o'clock (east)
+    (0, 1),  // 6 o'clock (south)
+    (-1, 0), // 10 o'clock (west)
+    (0, -1), // 12 o'clock (north)
+    (-1, 1), // 8 o'clock (south-west)
+    (1, 1),  // 4 o'clock (south-east)
+];
+
 // const HEIGHT_PIXELS: u16 = 2160;
 // const WIDTH_PIXELS: u16 = 3840;
 const HEIGHT_PIXELS: u16 = 216;
@@ -217,8 +241,13 @@ fn simulate_rainfall(
                 let mut min_height = cell.elevation as f32 + cell.water_depth;
                 let mut target: Option<(usize, usize)> = None;
 
-                let neighbours = hex_neighbors((x as u16, y as u16));
-                for (nx, ny) in neighbours {
+                let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
+                for &(dx, dy) in offsets {
+                    let nx = x as i32 + dx as i32;
+                    let ny = y as i32 + dy as i32;
+                    if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
+                        continue;
+                    }
                     let n_hex = &hex_map[ny as usize][nx as usize];
                     let neighbour_height = n_hex.elevation + n_hex.water_depth;
                     if neighbour_height < min_height {
@@ -275,8 +304,14 @@ fn simulate_rainfall(
                 } else {
                     // First gather immutable info
                     let cell_elev = hex_map[y][x].elevation;
+                    let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
                     let mut min_n = cell_elev;
-                    for (nx, ny) in hex_neighbors((x as u16, y as u16)) {
+                    for &(dx, dy) in offsets {
+                        let nx = x as i32 + dx as i32;
+                        let ny = y as i32 + dy as i32;
+                        if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
+                            continue;
+                        }
                         let n_elev = hex_map[ny as usize][nx as usize].elevation;
                         if n_elev < min_n {
                             min_n = n_elev;
