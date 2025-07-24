@@ -30,7 +30,7 @@ const HEX_SIZE: f32 = 2640.0; // Feet
 const RIVER_DEPTH_PER_STEP: f32 = 37.1; // Feet
 // Basically desert conditions
 const RAIN_PER_STEP: f32 = 0.000_003_08 * RIVER_DEPTH_PER_STEP; // Feet
-const STEP_MULTIPLIER: u32 = 1000;
+const STEP_MULTIPLIER: u32 = 10;
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
@@ -88,21 +88,14 @@ fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
     if elevation < SEA_LEVEL {
         let normalized_elevation = (elevation / SEA_LEVEL).min(1.0);
         if normalized_elevation < 0.5 {
-            // Clearly mark where errosion has lowered elevation below the lowest possible initial elevation.
+            // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
-        } else if normalized_elevation < 0.75 {
-            // Black to purple
-            let factor = (normalized_elevation - 0.5) / 0.25;
-            let red = 128 * factor as u8;
-            let green = 0;
-            let blue = 128 * factor as u8;
-            Rgb([red, green, blue])
         } else {
             // Purple to light blue
-            let factor = (normalized_elevation - 0.75) / 0.25;
+            let factor = (normalized_elevation - 0.5) / 0.5;
             let red = 128;
-            let green = 255 * factor as u8;
-            let blue = 128 + (127.0 * factor) as u8;
+            let green = (255.0 * factor) as u8;
+            let blue = (128.0 + (127.0 * factor)) as u8;
             Rgb([red, green, blue])
         }
     } else {
@@ -114,8 +107,8 @@ fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
         if normalized_height < 0.225 {
             // Green to yellow
             let factor = normalized_height / 0.225;
-            let green = 255;
             let red = (255.0 * factor) as u8;
+            let green = 255;
             let blue = 0;
             Rgb([red, green, blue])
         } else if normalized_height < 0.45 {
@@ -365,9 +358,11 @@ fn simulate_rainfall(
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             save_png("terrain.png", hex_map);
 
+            let round = _step / (WIDTH_HEXAGONS as u32);
+
             println!(
-                "Step {:>5}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
-                _step,
+                "Round {:.0}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
+                round,
                 (rainfall_added + river_added),
                 step_outflow,
                 water_on_land,
