@@ -27,14 +27,14 @@ const SEA_LEVEL: f32 = (WIDTH_HEXAGONS as f32) * 4.0;
 // This can be used to convert volume from foot-hexes to cubic feet.
 const HEX_SIZE: f32 = 2640.0; // Feet
 // const FAR_SOUTH_RANGE_START: u16 = 1420;
-const RIVER_DEPTH_PER_STEP: f32 = 24.0; // Feet
-// Rain per step might be around 0.000_003_08 * RIVER_DEPTH_PER_STEP
-const RAIN_PER_STEP: f32 = 0.000_074; // Feet
-const STEP_MULTIPLIER: u32 = 1800;
+const RIVER_DEPTH_PER_STEP: f32 = HEX_SIZE / 100.0; // Feet
+// Basically desert conditions
+const RAIN_PER_STEP: f32 = 0.000_003_08 * RIVER_DEPTH_PER_STEP; // Feet
+const STEP_MULTIPLIER: u32 = 1000;
 
 // --- Minimal erosion / deposition constants ---
-// I think want KC * RIVER_DEPTH_PER_STEP * STEP_MULTIPLIER to be around 200,000???
-const KC: f32 = 3.45; // capacity coefficient
+// Questioning the decision to divide by HEX_SIZE in errosion calculations.
+const KC: f32 = HEX_SIZE / 100.0; // capacity coefficient
 const KE: f32 = 0.1;  // erosion rate fraction
 const KD: f32 = 0.1;  // deposition rate fraction
 
@@ -145,6 +145,7 @@ fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
             let red = 62 + (193.0 * factor) as u8; // 62→255
             let green = 28 + (237.0 * factor) as u8;
             let blue = (255.0 * factor) as u8;
+            // TODO: I seem to be getting some weird magenta dots in the output, not sure why.
             Rgb([red, green, blue])
         }
     }
@@ -162,7 +163,6 @@ fn simulate_rainfall(
     river_depth_per_step: f32,
     river_y: usize,
     frame_buffer: &mut Vec<u32>,
-    max_elevation: f32,
 ) {
     let height = hex_map.len();
     if height == 0 {
@@ -358,9 +358,9 @@ fn simulate_rainfall(
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
-            render_frame(hex_map, frame_buffer, river_y, max_elevation);
+            render_frame(hex_map, frame_buffer, river_y);
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-            save_png("terrain.png", hex_map, max_elevation);
+            save_png("terrain.png", hex_map);
 
             println!(
                 "Step {:>5}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
@@ -403,10 +403,19 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
     let _ = img.save(path);
 }
 
-fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, max_elevation: f32) {
+fn get_max_elevation(hex_map: &Vec<Vec<Hex>>) -> f32 {
+    hex_map
+        .par_iter()                                       // rows in parallel
+        .map(|row| row.iter().map(|h| h.elevation).fold(f32::NEG_INFINITY, f32::max))
+        .reduce(|| f32::NEG_INFINITY, f32::max)
+}
+
+fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>) {
     // Create the visualization image
     let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
     
+    let max_elevation = get_max_elevation(hex_map);
+
     // For each pixel, find the nearest hex and use its elevation
     for y in 0..HEIGHT_PIXELS {
         for x in 0..WIDTH_PIXELS {
@@ -434,7 +443,9 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, max_elevation: f32) {
 }
 
 // Renders current hex_map state into an RGB buffer (u32 per pixel)
-fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], _river_y: usize, max_elevation: f32) {
+fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], _river_y: usize) {
+    let max_elevation = get_max_elevation(hex_map);
+
     for y in 0..HEIGHT_PIXELS {
         for x in 0..WIDTH_PIXELS {
             let hex_x = ((x as f32) / HEX_FACTOR) as u16;
@@ -467,17 +478,6 @@ fn main() {
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
 
-    let neighbors = hex_neighbors((0, 0));
-    println!("{:?}", neighbors);
-
-    // Other possible test cases for this logic:
-    // let mut neighbors = hex_neighbors((0, 1));
-    // println!("{:?}", neighbors);
-    // let mut neighbors = hex_neighbors((1, 0));
-    // println!("{:?}", neighbors);
-    // let mut neighbors = hex_neighbors((1, 1));
-    // println!("{:?}", neighbors);
-
     // Time hex map creation
     let hex_start = Instant::now();
     for y in 0..HEIGHT_PIXELS {
@@ -493,12 +493,16 @@ fn main() {
             //         println!("x_based_elevation: {}, far_south_bonus: {}", x_based_elevation, far_south_bonus);
             //     }
             // }
-            let elevation = x_based_elevation + rng.gen_range(0.0..HEX_SIZE/100.0);
+            let mut elevation = x_based_elevation + rng.gen_range(0.0..HEX_SIZE/100.0);
+            if y == 0 || y == HEIGHT_PIXELS - 1 {
+                // Try to prevent weird artifacts at the edges of the map.
+                elevation += 4.0;
+            }
             let mut water_depth = 0.0;
             // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
             // starting with zero water, I could probably do something fancier with pathfinding to guarantee
             // hexes start with water IFF they have a path to the sea.
-            if x_based_elevation + 24.0 < SEA_LEVEL {
+            if x_based_elevation + HEX_SIZE / 100.0 < SEA_LEVEL {
                 water_depth = SEA_LEVEL - elevation;
             }
             hex_map[y as usize].push(Hex {
@@ -509,11 +513,6 @@ fn main() {
             });
         }
     }
-
-    let max_elevation = hex_map
-        .par_iter()                                       // rows in parallel
-        .map(|row| row.iter().map(|h| h.elevation).fold(f32::NEG_INFINITY, f32::max))
-        .reduce(|| f32::NEG_INFINITY, f32::max);
 
     // --------------------------------------------------------
     // Milestone 1: pure rainfall with fixed sea boundary
@@ -526,7 +525,7 @@ fn main() {
     // Maybe KC should be around 0.00574 to harmonize these?
     // river_y should be around 0.29 * HEIGHT_PIXELS
     let river_y = (0.29 * HEIGHT_PIXELS as f32) as usize;
-    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * STEP_MULTIPLIER, RAIN_PER_STEP, RIVER_DEPTH_PER_STEP, river_y, &mut frame_buffer, max_elevation);
+    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * STEP_MULTIPLIER, RAIN_PER_STEP, RIVER_DEPTH_PER_STEP, river_y, &mut frame_buffer);
 
     // Count final blue pixels for quick sanity check
     let final_blue = frame_buffer
@@ -535,7 +534,7 @@ fn main() {
         .count();
     println!("Final blue pixels: {}", final_blue);
 
-    render_frame(&mut hex_map, &mut frame_buffer, river_y, max_elevation);
+    render_frame(&mut hex_map, &mut frame_buffer, river_y);
     save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
     let hex_duration = hex_start.elapsed();
@@ -543,7 +542,7 @@ fn main() {
 
     // Time PNG conversion
     let png_start = Instant::now();
-    save_png("terrain.png", &hex_map, max_elevation);
+    save_png("terrain.png", &hex_map);
 
     let save_duration = png_start.elapsed();
     println!("File saving took: {:?}", save_duration);
