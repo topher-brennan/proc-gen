@@ -6,8 +6,8 @@ use image::{RgbImage};
 
 // const HEIGHT_PIXELS: u16 = 2160;
 // const WIDTH_PIXELS: u16 = 3840;
-const HEIGHT_PIXELS: u16 = 72;
-const WIDTH_PIXELS: u16 = 128;
+const HEIGHT_PIXELS: u16 = 216;
+const WIDTH_PIXELS: u16 = 384;
 
 // Approximate value of sqrt(3) / 2
 // Useful because if the length of a perpendicular line segment connecting two
@@ -20,18 +20,29 @@ const HEX_FACTOR: f32 = 0.8660254037844386;
 
 // Assume 1 pixel per hex vertically, and HEX_FACTOR pixels per hex horizontally.
 // const WIDTH_HEXAGONS: u16 = 4434;
-const WIDTH_HEXAGONS: u16 = 148;
+const WIDTH_HEXAGONS: u16 = (WIDTH_PIXELS as f32 / HEX_FACTOR) as u16;
 
 // This combined wtih some other things keeps the starting coastline in the middle of the map.
 const SEA_LEVEL: f32 = (WIDTH_HEXAGONS as f32) * 4.0;
 // This can be used to convert volume from foot-hexes to cubic feet.
 const HEX_SIZE: f32 = 2640.0; // Feet
 // const FAR_SOUTH_RANGE_START: u16 = 1420;
+const RIVER_DEPTH_PER_STEP: f32 = 24.0; // Feet
+// Rain per step might be around 0.000_003_08 * RIVER_DEPTH_PER_STEP
+const RAIN_PER_STEP: f32 = 0.000_074; // Feet
+const STEP_MULTIPLIER: u32 = 1800;
+
+// --- Minimal erosion / deposition constants ---
+// I think want KC * RIVER_DEPTH_PER_STEP * STEP_MULTIPLIER to be around 200,000???
+const KC: f32 = 3.45; // capacity coefficient
+const KE: f32 = 0.1;  // erosion rate fraction
+const KD: f32 = 0.1;  // deposition rate fraction
 
 struct Hex {
     coordinate: (u16, u16),
     elevation: f32, // Feet
     water_depth: f32, // Feet of water currently stored in this hex
+    suspended_load: f32, // Feet of sediment stored in water column
 }
 
 // Returns the 6 neighbors of a hexagon, assuming a "columns line up" layout,
@@ -73,7 +84,10 @@ fn filter_coordinates(coordinates: Vec<(u16, u16)>) -> Vec<(u16, u16)> {
 }
 
 fn elevation_to_color(elevation: f32, max_elevation: f32) -> Rgb<u8> {
-    if elevation < SEA_LEVEL {
+    if elevation < SEA_LEVEL / 2.0 {
+        // Clearly mark where errosion has lowered elevation below the lowest possible initial elevation.
+        Rgb([0, 0, 0])
+    } else if elevation < SEA_LEVEL {
         // TODO: We might want to replace this with something that can be easily distinguished from actual indicators
         // of water depth, say purple, so that we can see where there's dry land below sea level.
         // Water: varying shades of blue
@@ -163,11 +177,19 @@ fn simulate_rainfall(
         .map(|_| vec![0.0f32; width])
         .collect();
 
+    // Reusable buffer for sediment transport (same layout)
+    let mut next_load: Vec<Vec<f32>> = (0..height)
+        .map(|_| vec![0.0f32; width])
+        .collect();
+
     for _step in 0..steps {
         // Mass balance stats per step
         let rainfall_added = (width * height) as f32 * rain_per_step;
         let mut river_added = 0.0f32;
         let mut step_outflow = 0.0f32;
+
+        let mut step_eroded    = 0.0f32;   // total bed material removed this step
+        let mut step_deposited = 0.0f32;   // total bed material deposited
 
         // 1) Add rainfall uniformly (parallel over rows)
         hex_map.par_iter_mut().for_each(|row| {
@@ -180,10 +202,15 @@ fn simulate_rainfall(
         if river_y < height {
             hex_map[river_y][WIDTH_HEXAGONS as usize - 1].water_depth += river_depth_per_step;
             river_added = river_depth_per_step;
+
+            let suspended_load_per_step = river_depth_per_step * 0.427 * KC / HEX_SIZE;
+            hex_map[river_y][WIDTH_HEXAGONS as usize - 1].suspended_load += suspended_load_per_step;
+            step_eroded += suspended_load_per_step;
         }
 
         // 2) Clear reusable next_water buffer in parallel
         next_water.par_iter_mut().for_each(|row| row.fill(0.0));
+        next_load.par_iter_mut().for_each(|row| row.fill(0.0));
 
         // 3) Route water once (sequential for now – write conflicts are tricky to parallelise safely)
         for y in 0..height {
@@ -213,18 +240,23 @@ fn simulate_rainfall(
                     Some((tx, ty)) => {
                         let target_hex = &hex_map[ty][tx];
                         let diff = cell.elevation + w - (target_hex.elevation + target_hex.water_depth);
-                        if diff / 2.0 > w {
+                        if diff > w {
                             // Avoid moving more water than is available.
                             next_water[ty][tx] += w;
+                            next_load[ty][tx] += cell.suspended_load; // move all load with water
                         } else {
                             // Attempt to equalize the water levels of the two hexes.
                             next_water[ty][tx] += diff / 2.0;
                             next_water[y][x] += w - diff / 2.0;
+                            let load_move = cell.suspended_load * (diff / 2.0) / w;
+                            next_load[ty][tx] += load_move;
+                            next_load[y][x] += cell.suspended_load - load_move;
                         }
                     }
                     None => {
                         // No lower neighbour; water stays put
                         next_water[y][x] += w;
+                        next_load[y][x] += cell.suspended_load;
                     }
                 }
             }
@@ -234,6 +266,7 @@ fn simulate_rainfall(
         for y in 0..height {
             for x in 0..width {
                 let new_w = next_water[y][x];
+                let new_load = next_load[y][x];
                 if x == 0 {
                     // West edge: ocean boundary keeps water_surface = SEA_LEVEL
                     let target_depth = (SEA_LEVEL - hex_map[y][x].elevation).max(0.0);
@@ -245,23 +278,63 @@ fn simulate_rainfall(
                     }
                     // Set water depth to ocean equilibrium
                     hex_map[y][x].water_depth = target_depth;
+                    hex_map[y][x].suspended_load = 0.0; // flushed to sea
                 } else {
-                    hex_map[y][x].water_depth = new_w;
+                    // First gather immutable info
+                    let cell_elev = hex_map[y][x].elevation;
+                    let mut min_n = cell_elev;
+                    for (nx, ny) in hex_neighbors((x as u16, y as u16)) {
+                        let n_elev = hex_map[ny as usize][nx as usize].elevation;
+                        if n_elev < min_n {
+                            min_n = n_elev;
+                        }
+                    }
+
+                    // Now mutate cell safely
+                    let cell = &mut hex_map[y][x];
+                    cell.water_depth = new_w;
+                    cell.suspended_load = new_load;
+
+                    let slope = ((cell_elev - min_n) / HEX_SIZE).max(0.0);
+                    let capacity = KC * cell.water_depth * slope;
+
+                    if cell.suspended_load < capacity {
+                        // erode
+                        let diff   = capacity - cell.suspended_load;
+                        let amount = KE * diff;
+                        cell.elevation      -= amount;
+                        cell.suspended_load += amount;
+                        step_eroded         += amount;
+                    } else {
+                        // deposit
+                        let diff   = cell.suspended_load - capacity;
+                        let amount = KD * diff;
+                        cell.elevation      += amount;
+                        cell.suspended_load -= amount;
+                        step_deposited      += amount;
+                    }
                 }
             }
         }
 
         if _step % 1000 == 0 {
+            let cells_above_sea_level: usize = hex_map
+                .par_iter()
+                .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL).count())
+                .sum();
+
             let (water_on_land, max_depth) = hex_map
                 .par_iter()
                 .map(|row| {
                     let mut sum = 0.0f32;
                     let mut row_max = 0.0f32;
                     for h in row {
-                        let d = h.water_depth;
-                        sum += d;
-                        if d > row_max {
-                            row_max = d;
+                        if h.elevation > SEA_LEVEL {
+                            let d = h.water_depth;
+                            sum += d;
+                            if d > row_max {
+                                row_max = d;
+                            }
                         }
                     }
                     (sum, row_max)
@@ -276,31 +349,34 @@ fn simulate_rainfall(
                     },
                 );
 
-            let mean_depth = water_on_land / (width * height) as f32;
-            let water_on_land_in_feet = water_on_land; // * HEX_SIZE * HEX_SIZE * HEX_FACTOR;
+            let mean_depth = water_on_land / cells_above_sea_level as f32;
 
             let wet_cells: usize = hex_map
                 .par_iter()
-                .map(|row| row.iter().filter(|h| h.water_depth > 0.05).count())
+                .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL && h.water_depth > 0.05).count())
                 .sum();
 
+            let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
+
             render_frame(hex_map, frame_buffer, river_y, max_elevation);
+            save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            save_png("terrain.png", hex_map, max_elevation);
 
             println!(
-                "Step {:>3}: total rain + inflow {:.0} ft-hexes  outflow {:.0} ft-hexes  on land {:.0} ft-hexes  mean {:.3} ft  max {:.2} ft  wet cells {}",
+                "Step {:>5}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
                 _step,
-                rainfall_added + river_added,
+                (rainfall_added + river_added),
                 step_outflow,
-                water_on_land_in_feet,
+                water_on_land,
                 mean_depth,
                 max_depth,
-                wet_cells
+                wet_cells,
+                wet_cells_percentage,
+                step_eroded,
+                step_deposited,
             );
         }
     }
-
-    // Get final frame so it can be saved later.
-    render_frame(hex_map, frame_buffer, river_y, max_elevation);
 
     let water_remaining: f32 = hex_map
         .iter()
@@ -308,11 +384,9 @@ fn simulate_rainfall(
         .map(|h| h.water_depth)
         .sum();
 
-    let water_remaining_in_feet = water_remaining; // * HEX_SIZE * HEX_SIZE * HEX_FACTOR;
-
     println!(
         "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes",
-        steps, total_outflow, water_remaining_in_feet
+        steps, total_outflow, water_remaining
     );
 }
 
@@ -329,8 +403,38 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
     let _ = img.save(path);
 }
 
+fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, max_elevation: f32) {
+    // Create the visualization image
+    let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+    
+    // For each pixel, find the nearest hex and use its elevation
+    for y in 0..HEIGHT_PIXELS {
+        for x in 0..WIDTH_PIXELS {
+            // Convert pixel coordinates to hex coordinates
+            // This is a simple mapping - you might want to adjust this based on your hex layout
+            let hex_x = (x as f32 / HEX_FACTOR) as u16;
+            let hex_y = y;
+            
+            // Clamp to valid hex coordinates
+            let hex_x = hex_x.min(WIDTH_HEXAGONS - 1);
+            let hex_y = hex_y.min(HEIGHT_PIXELS - 1);
+            
+            // Get the elevation from the hex map
+            let elevation = hex_map[hex_y as usize][hex_x as usize].elevation;
+            
+            // Convert elevation to color
+            let color = elevation_to_color(elevation, max_elevation);
+            
+            // Set the pixel
+            img.put_pixel(x as u32, y as u32, color);
+        }
+    }
+    
+    img.save(path).expect("Failed to save image");
+}
+
 // Renders current hex_map state into an RGB buffer (u32 per pixel)
-fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], river_y: usize, max_elevation: f32) {
+fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], _river_y: usize, max_elevation: f32) {
     for y in 0..HEIGHT_PIXELS {
         for x in 0..WIDTH_PIXELS {
             let hex_x = ((x as f32) / HEX_FACTOR) as u16;
@@ -389,7 +493,7 @@ fn main() {
             //         println!("x_based_elevation: {}, far_south_bonus: {}", x_based_elevation, far_south_bonus);
             //     }
             // }
-            let elevation = x_based_elevation + (rng.gen_range(0..24) as f32);
+            let elevation = x_based_elevation + rng.gen_range(0.0..HEX_SIZE/100.0);
             let mut water_depth = 0.0;
             // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
             // starting with zero water, I could probably do something fancier with pathfinding to guarantee
@@ -399,8 +503,9 @@ fn main() {
             }
             hex_map[y as usize].push(Hex {
                 coordinate: (x, y),
-                elevation: elevation,
-                water_depth: water_depth,
+                elevation,
+                water_depth,
+                suspended_load: 0.0,
             });
         }
     }
@@ -416,7 +521,12 @@ fn main() {
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
-    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * 1000, 0.0, 5.0, 21, &mut frame_buffer, max_elevation);
+    // River silt should be 0.00245 * river water
+    // Or maybe 0.427 * KC * river water? (Idea is to have incoming water be saturated with silt assuming slope is a little over 0.4 feet per hex)
+    // Maybe KC should be around 0.00574 to harmonize these?
+    // river_y should be around 0.29 * HEIGHT_PIXELS
+    let river_y = (0.29 * HEIGHT_PIXELS as f32) as usize;
+    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * STEP_MULTIPLIER, RAIN_PER_STEP, RIVER_DEPTH_PER_STEP, river_y, &mut frame_buffer, max_elevation);
 
     // Count final blue pixels for quick sanity check
     let final_blue = frame_buffer
@@ -425,6 +535,7 @@ fn main() {
         .count();
     println!("Final blue pixels: {}", final_blue);
 
+    render_frame(&mut hex_map, &mut frame_buffer, river_y, max_elevation);
     save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
     let hex_duration = hex_start.elapsed();
@@ -432,48 +543,9 @@ fn main() {
 
     // Time PNG conversion
     let png_start = Instant::now();
-    
-    // Create the visualization image
-    let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-    
-    // For each pixel, find the nearest hex and use its elevation
-    for y in 0..HEIGHT_PIXELS {
-        for x in 0..WIDTH_PIXELS {
-            // Convert pixel coordinates to hex coordinates
-            // This is a simple mapping - you might want to adjust this based on your hex layout
-            let hex_x = (x as f32 / HEX_FACTOR) as u16;
-            let hex_y = y;
-            
-            // Clamp to valid hex coordinates
-            let hex_x = hex_x.min(WIDTH_HEXAGONS - 1);
-            let hex_y = hex_y.min(HEIGHT_PIXELS - 1);
-            
-            // Get the elevation from the hex map
-            let elevation = hex_map[hex_y as usize][hex_x as usize].elevation;
-            
-            // Convert elevation to color
-            let color = elevation_to_color(elevation, max_elevation);
-            
-            // Set the pixel
-            img.put_pixel(x as u32, y as u32, color);
-        }
-    }
+    save_png("terrain.png", &hex_map, max_elevation);
 
-    let mut map_corners = Vec::new();
-    map_corners.push(hex_map[0][0].elevation);
-    map_corners.push(hex_map[0][WIDTH_HEXAGONS as usize - 1].elevation);
-    map_corners.push(hex_map[HEIGHT_PIXELS as usize - 1][0].elevation);
-    map_corners.push(hex_map[HEIGHT_PIXELS as usize - 1][WIDTH_HEXAGONS as usize - 1].elevation);
-    println!("{:?}", map_corners);
-    
-    let png_conversion_duration = png_start.elapsed();
-    println!("PNG conversion took: {:?}", png_conversion_duration);
-    
-    // Time file saving separately
-    // TODO: This is slow, should just pop up in window rather than worry about saving.
-    let save_start = Instant::now();
-    img.save("terrain.png").expect("Failed to save image");
-    let save_duration = save_start.elapsed();
+    let save_duration = png_start.elapsed();
     println!("File saving took: {:?}", save_duration);
     println!("Terrain visualization saved as terrain.png");
 }

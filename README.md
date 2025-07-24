@@ -16,6 +16,8 @@ When first implementing rain, I found it took a surprisingly long time for water
 
 My hope is that when errosion is implemented stabilization will be faster.
 
+Update: stabilization doesn't seem faster with errosion. With a map 296 hexes wide, takes almost ~100,000 steps to stabilize. Want a model that allows for 8,000+ feet of errosion in some reasonable timeframe.
+
 ## High-Level Strategy: Sea-to-River Erosion & Deposition Model
 
 The goal is to evolve a hex-grid terrain until realistic landforms emerge under the combined influence of:
