@@ -199,6 +199,16 @@ fn simulate_rainfall(
         .map(|_| vec![0.0f32; width])
         .collect();
 
+    // Buffer storing minimum neighbour elevation for each cell
+    let mut min_neigh_elev: Vec<Vec<f32>> = (0..height)
+        .map(|_| vec![0.0f32; width])
+        .collect();
+
+    // Reusable buffer for elevation deltas (angle-of-repose)
+    let mut delta_elev: Vec<Vec<f32>> = (0..height)
+        .map(|_| vec![0.0f32; width])
+        .collect();
+
     for _step in 0..steps {
         // Mass balance stats per step
         let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
@@ -207,6 +217,38 @@ fn simulate_rainfall(
 
         let mut step_eroded    = 0.0f32;   // total bed material removed this step
         let mut step_deposited = 0.0f32;   // total bed material deposited
+
+        // 0) Pre-compute min neighbour elevation in parallel (for slope calc)
+        min_neigh_elev
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(y, row)| {
+                let y_i = y as i32;
+                let width_i = width as i32;
+                let height_i = height as i32;
+                let src_row = &hex_map[y];
+                for x in 0..width {
+                    let cell_elev = src_row[x].elevation;
+                    let offsets = if (x & 1) == 0 {
+                        &NEIGH_OFFSETS_EVEN
+                    } else {
+                        &NEIGH_OFFSETS_ODD
+                    };
+                    let mut min_n = cell_elev;
+                    for &(dx, dy) in offsets {
+                        let nx = x as i32 + dx as i32;
+                        let ny = y_i + dy as i32;
+                        if nx < 0 || nx >= width_i || ny < 0 || ny >= height_i {
+                            continue;
+                        }
+                        let n_elev = hex_map[ny as usize][nx as usize].elevation;
+                        if n_elev < min_n {
+                            min_n = n_elev;
+                        }
+                    }
+                    row[x] = min_n;
+                }
+            });
 
         // 1) Add rainfall uniformly (parallel over rows)
         hex_map.par_iter_mut().for_each(|row| {
@@ -304,19 +346,7 @@ fn simulate_rainfall(
                 } else {
                     // First gather immutable info
                     let cell_elev = hex_map[y][x].elevation;
-                    let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
-                    let mut min_n = cell_elev;
-                    for &(dx, dy) in offsets {
-                        let nx = x as i32 + dx as i32;
-                        let ny = y as i32 + dy as i32;
-                        if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
-                            continue;
-                        }
-                        let n_elev = hex_map[ny as usize][nx as usize].elevation;
-                        if n_elev < min_n {
-                            min_n = n_elev;
-                        }
-                    }
+                    let min_n = min_neigh_elev[y][x];
 
                     // Now mutate cell safely
                     let cell = &mut hex_map[y][x];
@@ -345,10 +375,10 @@ fn simulate_rainfall(
             }
         }
 
-        // 4b) Angle-of-repose adjustment (slope limit)
-        enforce_angle_of_repose(hex_map);
+        // 4b) Angle-of-repose adjustment (slope limit) – no fresh allocations
+        enforce_angle_of_repose(hex_map, &mut delta_elev);
 
-        if _step % (WIDTH_HEXAGONS as u32) == 0 {
+        if _step % (WIDTH_HEXAGONS as u32) == (WIDTH_HEXAGONS as u32) - 1 {
             let cells_above_sea_level: usize = hex_map
                 .par_iter()
                 .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL).count())
@@ -388,12 +418,11 @@ fn simulate_rainfall(
                 .sum();
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
+            let round = _step / (WIDTH_HEXAGONS as u32);
 
             render_frame(hex_map, frame_buffer, river_y);
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             save_png("terrain.png", hex_map);
-
-            let round = _step / (WIDTH_HEXAGONS as u32);
 
             println!(
                 "Round {:.0}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
@@ -426,32 +455,41 @@ fn simulate_rainfall(
 //---------------------------------------------------------------------
 // Enforce that no cell is more than HEX_SIZE ft higher than any neighbour
 //---------------------------------------------------------------------
-fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>) {
+fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>>) {
     let height = hex_map.len();
     let width = hex_map[0].len();
 
-    // temp elevation changes
-    let mut delta: Vec<Vec<f32>> = vec![vec![0.0; width]; height];
+    // zero the delta buffer
+    delta.par_iter_mut().for_each(|row| row.fill(0.0));
 
     for y in 0..height {
         for x in 0..width {
             let elev = hex_map[y][x].elevation;
-            for (nx, ny) in hex_neighbors((x as u16, y as u16)) {
+            let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
+            for &(dx, dy) in offsets {
+                let nx = x as i32 + dx as i32;
+                let ny = y as i32 + dy as i32;
+                if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
+                    continue;
+                }
                 let nelev = hex_map[ny as usize][nx as usize].elevation;
                 let diff = elev - nelev;
                 if diff > HEX_SIZE {
                     let excess = (diff - HEX_SIZE) / 2.0; // move half each way
-                    delta[y][x]      -= excess;
+                    delta[y][x] -= excess;
                     delta[ny as usize][nx as usize] += excess;
                 }
             }
         }
     }
 
-    // Apply deltas
+    // Apply deltas in a separate pass
     for y in 0..height {
         for x in 0..width {
-            hex_map[y][x].elevation += delta[y][x];
+            let d = delta[y][x];
+            if d != 0.0 {
+                hex_map[y][x].elevation += d;
+            }
         }
     }
 }
@@ -600,17 +638,16 @@ fn main() {
         .count();
     println!("Final blue pixels: {}", final_blue);
 
-    render_frame(&mut hex_map, &mut frame_buffer, river_y);
-    save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-
     let hex_duration = hex_start.elapsed();
     println!("Hex map creation took: {:?}", hex_duration);
 
     // Time PNG conversion
     let png_start = Instant::now();
+    render_frame(&mut hex_map, &mut frame_buffer, river_y);
+    save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
     save_png("terrain.png", &hex_map);
 
     let save_duration = png_start.elapsed();
-    println!("File saving took: {:?}", save_duration);
+    println!("Image rendering and saving took: {:?}", save_duration);
     println!("Terrain visualization saved as terrain.png");
 }
