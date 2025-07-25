@@ -72,7 +72,7 @@ const HEX_SIZE: f32 = 2640.0; // Feet
 const RIVER_DEPTH_PER_STEP: f32 = 37.1; // Feet
 // One inch of rain per year - desert conditions.
 const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
-const STEP_MULTIPLIER: u32 = 1000;
+const STEP_MULTIPLIER: u32 = 200;
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
