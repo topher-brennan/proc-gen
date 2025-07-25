@@ -4,6 +4,21 @@ use std::time::Instant;
 use rayon::prelude::*;
 use image::{RgbImage};
 
+// Helper macro to detect NaN / Inf as early as possible and crash with context.
+// I've been using step -1 to indicate that the value is not associated with a step,
+// or the step is not known.
+macro_rules! ensure_finite {
+    ($val:expr, $label:expr, $x:expr, $y:expr, $step:expr) => {
+        if !$val.is_finite() {
+            panic!(
+                "Detected non-finite value for {} at cell ({}, {}) on step {}: {}",
+                $label, $x, $y, $step, $val
+            );
+        }
+    };
+}
+use ensure_finite;
+
 // -----------------------------------------------------------------------------
 // Neighbour offsets for axial "columns-lined" hex layout
 // -----------------------------------------------------------------------------
@@ -57,7 +72,7 @@ const HEX_SIZE: f32 = 2640.0; // Feet
 const RIVER_DEPTH_PER_STEP: f32 = 37.1; // Feet
 // One inch of rain per year - desert conditions.
 const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
-const STEP_MULTIPLIER: u32 = 20;
+const STEP_MULTIPLIER: u32 = 1000;
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
@@ -321,10 +336,20 @@ fn simulate_rainfall(
                 if let Some((tx, ty)) = tgt {
                     let target_hex = &hex_map[ty][tx];
                     let diff = cell.elevation + w - (target_hex.elevation + target_hex.water_depth);
-                    let move_w = if diff > w { w } else { diff / 2.0 };
-                    if move_w > 0.0 {
-                        row.w[x] = move_w;
-                        row.load[x] = cell.suspended_load * move_w / w;
+                    // This code is a little more elegant but may have a floating point error.
+                    // let move_w = if diff > w { w } else { diff / 2.0 };
+                    // if move_w > 0.0 {
+                    //     row.w[x] = move_w;
+                    //     row.load[x] = cell.suspended_load * move_w / w;
+                    //     row.tgt[x] = ty * width + tx;
+                    // }
+                    if diff > w {
+                        row.w[x] = w;
+                        row.load[x] = cell.suspended_load;
+                        row.tgt[x] = ty * width + tx;
+                    } else {
+                        row.w[x] = diff / 2.0;
+                        row.load[x] = cell.suspended_load * (diff / 2.0) / w;
                         row.tgt[x] = ty * width + tx;
                     }
                 }
@@ -339,7 +364,13 @@ fn simulate_rainfall(
             .for_each(|(y, (row_next_w, row_next_load))| {
                 for x in 0..width {
                     let mut new_w   = hex_map[y][x].water_depth   - out_rows[y].w[x];
-                    let mut new_load= hex_map[y][x].suspended_load - out_rows[y].load[x];
+
+                    let suspended_load = hex_map[y][x].suspended_load;
+                    let out_load = out_rows[y].load[x];
+                    let mut new_load = suspended_load - out_load;
+
+                    ensure_finite!(new_w, "new_w", x, y, _step);
+                    ensure_finite!(new_load, format!("new_load ({suspended_load} - {out_load})"), x, y, _step);
 
                     let cur_idx = y * width + x;
                     let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
@@ -388,12 +419,16 @@ fn simulate_rainfall(
                     cell.suspended_load = new_load;
 
                     let slope = ((cell_elev - min_n) / HEX_SIZE).max(0.0);
+                    ensure_finite!(slope, format!("slope (({cell_elev} - {min_n}) / {HEX_SIZE})"), x, y, _step);
+
                     let capacity = KC * cell.water_depth * slope;
+                    ensure_finite!(capacity, "capacity", x, y, _step);
 
                     if cell.suspended_load < capacity {
                         // erode
                         let diff   = capacity - cell.suspended_load;
                         let amount = KE * diff;
+                        ensure_finite!(amount, "erosion", x, y, _step);
                         cell.elevation      -= amount;
                         cell.suspended_load += amount;
                         step_eroded         += amount;
@@ -401,6 +436,7 @@ fn simulate_rainfall(
                         // deposit
                         let diff   = cell.suspended_load - capacity;
                         let amount = KD * diff;
+                        ensure_finite!(amount, "deposition", x, y, _step);
                         cell.elevation      += amount;
                         cell.suspended_load -= amount;
                         step_deposited      += amount;
@@ -444,6 +480,8 @@ fn simulate_rainfall(
                     },
                 );
 
+            let max_elevation = get_max_elevation(hex_map);
+
             let mean_depth = water_on_land / cells_above_sea_level as f32;
 
             let wet_cells: usize = hex_map
@@ -459,13 +497,14 @@ fn simulate_rainfall(
             save_png("terrain.png", hex_map);
 
             println!(
-                "Round {:.0}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
+                "Round {:.0}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  max elevation {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
                 round,
                 (rainfall_added + RIVER_DEPTH_PER_STEP),
                 step_outflow,
                 water_on_land,
                 mean_depth,
                 max_depth,
+                max_elevation,
                 wet_cells,
                 wet_cells_percentage,
                 step_eroded,
@@ -499,6 +538,7 @@ fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>
     for y in 0..height {
         for x in 0..width {
             let elev = hex_map[y][x].elevation;
+            ensure_finite!(elev, "elevation", x, y, -1);
             let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
             for &(dx, dy) in offsets {
                 let nx = x as i32 + dx as i32;
@@ -507,6 +547,7 @@ fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>
                     continue;
                 }
                 let nelev = hex_map[ny as usize][nx as usize].elevation;
+                ensure_finite!(nelev, "neighbour elevation", nx as usize, ny as usize, -1);
                 let diff = elev - nelev;
                 if diff > HEX_SIZE {
                     let excess = (diff - HEX_SIZE) / 2.0; // move half each way
@@ -523,6 +564,7 @@ fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>
             let d = delta[y][x];
             if d != 0.0 {
                 hex_map[y][x].elevation += d;
+                ensure_finite!(hex_map[y][x].elevation, format!("elevation (after delta {d})"), x, y, -1);
             }
         }
     }
@@ -553,7 +595,7 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>) {
     let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
     
     let max_elevation = get_max_elevation(hex_map);
-
+    
     // For each pixel, find the nearest hex and use its elevation
     for y in 0..HEIGHT_PIXELS {
         for x in 0..WIDTH_PIXELS {
@@ -576,7 +618,7 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>) {
             img.put_pixel(x as u32, y as u32, color);
         }
     }
-    
+
     img.save(path).expect("Failed to save image");
 }
 
@@ -638,6 +680,9 @@ fn main() {
             } else {
                 elevation += rng.gen_range(0.0..HEX_SIZE/100.0);
             }
+
+            ensure_finite!(elevation, "elevation", x, y, -1);
+
             let mut water_depth = 0.0;
             // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
             // starting with zero water, I could probably do something fancier with pathfinding to guarantee
