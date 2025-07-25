@@ -28,6 +28,9 @@ const NEIGH_OFFSETS_ODD: [(i16, i16); 6] = [
     (1, 1),  // 4 o'clock (south-east)
 ];
 
+// Sentinel indicating no downslope target during water-routing
+const NO_TARGET: usize = usize::MAX;
+
 // const HEIGHT_PIXELS: u16 = 2160;
 // const WIDTH_PIXELS: u16 = 3840;
 const HEIGHT_PIXELS: u16 = 216;
@@ -54,7 +57,7 @@ const HEX_SIZE: f32 = 2640.0; // Feet
 const RIVER_DEPTH_PER_STEP: f32 = 37.1; // Feet
 // One inch of rain per year - desert conditions.
 const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
-const STEP_MULTIPLIER: u32 = 10;
+const STEP_MULTIPLIER: u32 = 20;
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
@@ -209,10 +212,25 @@ fn simulate_rainfall(
         .map(|_| vec![0.0f32; width])
         .collect();
 
+    // --- Buffers for parallel water-routing (gather→scatter) ---
+    #[derive(Clone)]
+    struct RowOut {
+        w:    Vec<f32>,
+        load: Vec<f32>,
+        tgt:  Vec<usize>,
+    }
+
+    let mut out_rows: Vec<RowOut> = (0..height)
+        .map(|_| RowOut {
+            w:    vec![0.0f32; width],
+            load: vec![0.0f32; width],
+            tgt:  vec![NO_TARGET; width],
+        })
+        .collect();
+
     for _step in 0..steps {
         // Mass balance stats per step
         let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
-        let river_added = 0.0f32;
         let mut step_outflow = 0.0f32;
 
         let mut step_eroded    = 0.0f32;   // total bed material removed this step
@@ -267,12 +285,17 @@ fn simulate_rainfall(
             step_eroded += suspended_load_per_step;
         }
 
-        // 2) Clear reusable next_water buffer in parallel
+        // 2) Zero reusable buffers in parallel
         next_water.par_iter_mut().for_each(|row| row.fill(0.0));
         next_load.par_iter_mut().for_each(|row| row.fill(0.0));
+        out_rows.par_iter_mut().for_each(|row| {
+            row.w.fill(0.0);
+            row.load.fill(0.0);
+            row.tgt.fill(NO_TARGET);
+        });
 
-        // 3) Route water once (sequential for now – write conflicts are tricky to parallelise safely)
-        for y in 0..height {
+        // 3a) Phase-1: gather outflow per cell (parallel, read-only on hex_map)
+        out_rows.par_iter_mut().enumerate().for_each(|(y, row)| {
             for x in 0..width {
                 let cell = &hex_map[y][x];
                 let w = cell.water_depth;
@@ -280,51 +303,62 @@ fn simulate_rainfall(
                     continue;
                 }
 
-                let mut min_height = cell.elevation as f32 + cell.water_depth;
-                let mut target: Option<(usize, usize)> = None;
-
+                let mut min_height = cell.elevation + w;
+                let mut tgt: Option<(usize, usize)> = None;
                 let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
                 for &(dx, dy) in offsets {
                     let nx = x as i32 + dx as i32;
                     let ny = y as i32 + dy as i32;
-                    if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
-                        continue;
-                    }
+                    if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 { continue; }
                     let n_hex = &hex_map[ny as usize][nx as usize];
-                    let neighbour_height = n_hex.elevation + n_hex.water_depth;
-                    if neighbour_height < min_height {
-                        min_height = neighbour_height;
-                        target = Some((nx as usize, ny as usize));
+                    let nh = n_hex.elevation + n_hex.water_depth;
+                    if nh < min_height {
+                        min_height = nh;
+                        tgt = Some((nx as usize, ny as usize));
                     }
                 }
 
-                // TODO: In this version of the code, we're moving either all water, or no water,
-                // will test this to see how it works but could lead to some strange behavior.
-                match target {
-                    Some((tx, ty)) => {
-                        let target_hex = &hex_map[ty][tx];
-                        let diff = cell.elevation + w - (target_hex.elevation + target_hex.water_depth);
-                        if diff > w {
-                            // Avoid moving more water than is available.
-                            next_water[ty][tx] += w;
-                            next_load[ty][tx] += cell.suspended_load; // move all load with water
-                        } else {
-                            // Attempt to equalize the water levels of the two hexes.
-                            next_water[ty][tx] += diff / 2.0;
-                            next_water[y][x] += w - diff / 2.0;
-                            let load_move = cell.suspended_load * (diff / 2.0) / w;
-                            next_load[ty][tx] += load_move;
-                            next_load[y][x] += cell.suspended_load - load_move;
-                        }
-                    }
-                    None => {
-                        // No lower neighbour; water stays put
-                        next_water[y][x] += w;
-                        next_load[y][x] += cell.suspended_load;
+                if let Some((tx, ty)) = tgt {
+                    let target_hex = &hex_map[ty][tx];
+                    let diff = cell.elevation + w - (target_hex.elevation + target_hex.water_depth);
+                    let move_w = if diff > w { w } else { diff / 2.0 };
+                    if move_w > 0.0 {
+                        row.w[x] = move_w;
+                        row.load[x] = cell.suspended_load * move_w / w;
+                        row.tgt[x] = ty * width + tx;
                     }
                 }
             }
-        }
+        });
+
+        // 3b) Phase-2: scatter – assemble inflows & own remainder (parallel)
+        next_water
+            .par_iter_mut()
+            .zip(&mut next_load)
+            .enumerate()
+            .for_each(|(y, (row_next_w, row_next_load))| {
+                for x in 0..width {
+                    let mut new_w   = hex_map[y][x].water_depth   - out_rows[y].w[x];
+                    let mut new_load= hex_map[y][x].suspended_load - out_rows[y].load[x];
+
+                    let cur_idx = y * width + x;
+                    let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
+                    for &(dx, dy) in offsets {
+                        let nx = x as i32 + dx as i32;
+                        let ny = y as i32 + dy as i32;
+                        if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 { continue; }
+                        let nxi = nx as usize;
+                        let nyi = ny as usize;
+                        if out_rows[nyi].tgt[nxi] == cur_idx {
+                            new_w   += out_rows[nyi].w   [nxi];
+                            new_load+= out_rows[nyi].load[nxi];
+                        }
+                    }
+
+                    row_next_w[x]    = new_w;
+                    row_next_load[x] = new_load;
+                }
+            });
 
         // 4) Apply next water depths, counting outflow at sea boundary (x == 0)
         for y in 0..height {
@@ -427,7 +461,7 @@ fn simulate_rainfall(
             println!(
                 "Round {:.0}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean {:.2} ft  max {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
                 round,
-                (rainfall_added + river_added),
+                (rainfall_added + RIVER_DEPTH_PER_STEP),
                 step_outflow,
                 water_on_land,
                 mean_depth,
