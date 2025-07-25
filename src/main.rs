@@ -72,10 +72,10 @@ const HEX_SIZE: f32 = 2640.0; // Feet
 const RIVER_WATER_PER_STEP: f32 = 37.1; // Feet
 // I *think* this should be the elevation-drop-per-hex that gives us a steady state,
 // but now I'm worried I did my math wrong.
-const RIVER_LOAD_FACTOR: f32 = 1.0;
+const RIVER_LOAD_FACTOR: f32 = 1.2;
 // One inch of rain per year - desert conditions.
 const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
-const STEP_MULTIPLIER: u32 = 6000;
+const STEP_MULTIPLIER: u32 = 1000;
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
@@ -83,8 +83,10 @@ const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 const KC: f32 = HEX_SIZE / 100.0; // capacity coefficient
 const KE: f32 = 0.05;  // erosion rate fraction
 const KD: f32 = 0.05;  // deposition rate fraction
+// How large FLOW_FACTOR can be without erroding the sea floor seems related to
+// KE and KD, but I'm not sure of the exact relationship.
+const FLOW_FACTOR: f32 = 0.9;
 const MAX_SLOPE: f32 = 1.0; // Prevents runaway erosion by capping slope used in capacity calc
-const FLOW_FACTOR: f32 = 1.0 - KE - KD;
 const MAX_FLOW: f32 = WIDTH_HEXAGONS as f32;
 const MAX_ELEVATION: f32 = (WIDTH_HEXAGONS as f32) * 4.0 + HEX_SIZE / 100.0;
 
@@ -212,6 +214,8 @@ fn simulate_rainfall(
     let width = hex_map[0].len();
 
     let mut total_outflow = 0.0f32;
+    let mut total_sediment_in = 0.0f32;
+    let mut total_sediment_out = 0.0f32;
 
     // Reusable buffer for next water depths
     let mut next_water: Vec<Vec<f32>> = (0..height)
@@ -253,9 +257,8 @@ fn simulate_rainfall(
         // Mass balance stats per step
         let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
         let mut step_outflow = 0.0f32;
-
-        let mut step_eroded    = 0.0f32;   // total bed material removed this step
-        let mut step_deposited = 0.0f32;   // total bed material deposited
+        let mut step_sediment_in = 0.0f32;
+        let mut step_sediment_out = 0.0f32;
 
         // 0) Pre-compute min neighbour elevation in parallel (for slope calc)
         min_neigh_elev
@@ -303,7 +306,8 @@ fn simulate_rainfall(
 
             let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
             hex_map[river_y][WIDTH_HEXAGONS as usize - 1].suspended_load += suspended_load_per_step;
-            step_eroded += suspended_load_per_step;
+            step_sediment_in += suspended_load_per_step;
+            total_sediment_in += suspended_load_per_step;
         }
 
         // 2) Zero reusable buffers in parallel
@@ -407,6 +411,9 @@ fn simulate_rainfall(
                     }
                     // Set water depth to ocean equilibrium
                     hex_map[y][x].water_depth = target_depth;
+
+                    total_sediment_out += hex_map[y][x].suspended_load;
+                    step_sediment_out += hex_map[y][x].suspended_load;
                     hex_map[y][x].suspended_load = 0.0; // flushed to sea
                 } else {
                     // First gather immutable info
@@ -432,7 +439,6 @@ fn simulate_rainfall(
                         ensure_finite!(amount, "erosion", x, y, _step);
                         cell.elevation      -= amount;
                         cell.suspended_load += amount;
-                        step_eroded         += amount;
                     } else {
                         // deposit
                         let diff   = cell.suspended_load - capacity;
@@ -440,7 +446,6 @@ fn simulate_rainfall(
                         ensure_finite!(amount, "deposition", x, y, _step);
                         cell.elevation      += amount;
                         cell.suspended_load -= amount;
-                        step_deposited      += amount;
                     }
                 }
             }
@@ -495,8 +500,9 @@ fn simulate_rainfall(
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             save_png("terrain.png", hex_map);
 
+            // TOOD: Add "sediment in" and "sediment out"
             println!(
-                "Round {:.0}: rain+river {:.1}  outflow {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  erod {:.3}  dep {:.3}",
+                "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.2}  sediment out {:.2}",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
                 step_outflow,
@@ -505,8 +511,8 @@ fn simulate_rainfall(
                 max_depth,
                 wet_cells,
                 wet_cells_percentage,
-                step_eroded,
-                step_deposited,
+                step_sediment_in,
+                step_sediment_out,
             );
         }
     }
@@ -518,8 +524,8 @@ fn simulate_rainfall(
         .sum();
 
     println!(
-        "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes",
-        steps, total_outflow, water_remaining
+        "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
+        steps, total_outflow, water_remaining, total_sediment_in, total_sediment_out
     );
 }
 
@@ -685,6 +691,39 @@ fn main() {
                 water_depth,
                 suspended_load: 0.0,
             });
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Prefill local pits (cells lower than all neighbours but still above
+    // sea level) with enough water so the initial water surface equals the
+    // lowest neighbour.  This prevents long "filling" spin-up times for tiny
+    // closed depressions.
+    // ---------------------------------------------------------------------
+    for y in 0..HEIGHT_PIXELS as usize {
+        for x in 0..WIDTH_HEXAGONS as usize {
+            let cell_elev = hex_map[y][x].elevation;
+            if cell_elev < SEA_LEVEL { continue; } // below sea already filled
+
+            let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
+            let mut lowest_neigh = f32::INFINITY;
+            let mut is_pit = true;
+
+            for &(dx, dy) in offsets {
+                let nx = x as i32 + dx as i32;
+                let ny = y as i32 + dy as i32;
+                if nx < 0 || nx >= WIDTH_HEXAGONS as i32 || ny < 0 || ny >= HEIGHT_PIXELS as i32 { continue; }
+                let n_elev = hex_map[ny as usize][nx as usize].elevation;
+                if n_elev <= cell_elev {
+                    is_pit = false;
+                    break;
+                }
+                if n_elev < lowest_neigh { lowest_neigh = n_elev; }
+            }
+
+            if is_pit && lowest_neigh.is_finite() {
+                hex_map[y][x].water_depth = lowest_neigh - cell_elev;
+            }
         }
     }
 
