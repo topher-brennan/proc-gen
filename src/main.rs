@@ -75,7 +75,7 @@ const RIVER_WATER_PER_STEP: f32 = 37.1; // Feet
 const RIVER_LOAD_FACTOR: f32 = 1.2;
 // One inch of rain per year - desert conditions.
 const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
-const STEP_MULTIPLIER: u32 = 1000;
+const DEFAULT_ROUNDS: u32 = 1000; // default number of "rounds" (each = WIDTH_HEXAGONS steps)
 const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
 
 // --- Minimal erosion / deposition constants ---
@@ -500,7 +500,6 @@ fn simulate_rainfall(
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             save_png("terrain.png", hex_map);
 
-            // TOOD: Add "sediment in" and "sediment out"
             println!(
                 "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.2}  sediment out {:.2}",
                 round,
@@ -650,6 +649,12 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], _river_y: usize) {
 }
 
 fn main() {
+    // Allow user to override number of rounds via command-line: first positional arg is rounds, e.g. `cargo run --release -- 2000`
+    let rounds: u32 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_ROUNDS);
+
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
 
@@ -734,7 +739,8 @@ fn main() {
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
     // Maybe KC should be around 0.00574 to harmonize these?
-    simulate_rainfall(&mut hex_map, (WIDTH_HEXAGONS as u32) * STEP_MULTIPLIER, river_y, &mut frame_buffer);
+    let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
+    simulate_rainfall(&mut hex_map, total_steps, river_y, &mut frame_buffer);
 
     // Count final blue pixels for quick sanity check
     let final_blue = frame_buffer
