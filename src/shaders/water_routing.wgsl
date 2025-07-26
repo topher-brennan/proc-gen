@@ -15,7 +15,7 @@ var<storage, read_write> next_water: array<f32>;
 var<storage, read_write> next_load: array<f32>;
 
 @group(0) @binding(3)
-var<uniform> constants: Constants;
+var<storage, read_write> tgt_buffer: array<u32>;
 
 struct Constants {
     width: f32,
@@ -23,6 +23,11 @@ struct Constants {
     flow_factor: f32,
     max_flow: f32,
 }
+
+@group(0) @binding(4)
+var<uniform> constants: Constants;
+
+const NO_TARGET: u32 = 0xFFFFFFFFu;
 
 // Neighbor offsets for even columns
 const NEIGH_OFFSETS_EVEN: array<vec2<i32>, 6> = array<vec2<i32>, 6>(
@@ -76,6 +81,7 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (w <= 0.0) {
         next_water[index] = 0.0;
         next_load[index] = 0.0;
+        tgt_buffer[index]  = NO_TARGET;
         return;
     }
     
@@ -129,17 +135,20 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let target_index = get_hex_index(target_x, target_y);
         let target_hex = hex_data[target_index];
         let diff = hex.elevation + w - (target_hex.elevation + target_hex.water_depth);
-        let move_w = min(select(w, diff * constants.flow_factor, diff > w), constants.max_flow);
+        let move_w = min(select(diff * constants.flow_factor, w, diff > w), constants.max_flow);
         
         if (move_w > 0.0) {
             next_water[index] = move_w;
             next_load[index] = hex.suspended_load * move_w / w;
+            tgt_buffer[index]  = target_index;
         } else {
             next_water[index] = 0.0;
             next_load[index] = 0.0;
+            tgt_buffer[index]  = NO_TARGET;
         }
     } else {
         next_water[index] = 0.0;
         next_load[index] = 0.0;
+        tgt_buffer[index] = NO_TARGET;
     }
 } 

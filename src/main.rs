@@ -327,100 +327,29 @@ fn simulate_rainfall(
             }
         }
 
-        // 1b) Add river inflow at east edge (x = WIDTH_HEXAGONS-1)
+        // 1b) Add river inflow at east edge AFTER GPU routing scatter so it isn't overwritten
         if river_y < height {
-            hex_map[river_y][WIDTH_HEXAGONS as usize - 1].water_depth += RIVER_WATER_PER_STEP;
-
+            apply_river_inflow(river_y, hex_map, &mut next_water, &mut next_load, &mut gpu_sim);
             let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
-            hex_map[river_y][WIDTH_HEXAGONS as usize - 1].suspended_load += suspended_load_per_step;
             step_sediment_in += suspended_load_per_step;
             total_sediment_in += suspended_load_per_step;
         }
 
-        // 2) Zero reusable buffers in parallel
-        next_water.par_iter_mut().for_each(|row| row.fill(0.0));
-        next_load.par_iter_mut().for_each(|row| row.fill(0.0));
-        out_rows.par_iter_mut().for_each(|row| {
-            row.w.fill(0.0);
-            row.load.fill(0.0);
-            row.tgt.fill(NO_TARGET);
-        });
+        // GPU water routing --------------------------------------------------
+        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
+        gpu_sim.run_scatter_step(width, height);
 
-        // 3a) Phase-1: gather outflow per cell (parallel, read-only on hex_map)
-        out_rows.par_iter_mut().enumerate().for_each(|(y, row)| {
-            for x in 0..width {
-                let cell = &hex_map[y][x];
-                let w = cell.water_depth;
-                if w <= 0.0 {
-                    continue;
-                }
-
-                let mut min_height = cell.elevation + w;
-                let mut tgt: Option<(usize, usize)> = None;
-                let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
-                for &(dx, dy) in offsets {
-                    let nx = x as i32 + dx as i32;
-                    let ny = y as i32 + dy as i32;
-                    if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 { continue; }
-                    let n_hex = &hex_map[ny as usize][nx as usize];
-                    let nh = n_hex.elevation + n_hex.water_depth;
-                    if nh < min_height {
-                        min_height = nh;
-                        tgt = Some((nx as usize, ny as usize));
-                    }
-                }
-
-                if let Some((tx, ty)) = tgt {
-                    let target_hex = &hex_map[ty][tx];
-                    let diff = cell.elevation + w - (target_hex.elevation + target_hex.water_depth);
-                    let move_w = (if diff > w { w } else { diff * FLOW_FACTOR }).min(MAX_FLOW);
-                    if move_w > 0.0 {
-                        row.w[x] = move_w;
-                        row.load[x] = cell.suspended_load * move_w / w;
-                        row.tgt[x] = ty * width + tx;
-                    }
-                }
-            }
-        });
-
-        // 3b) Phase-2: scatter – assemble inflows & own remainder (parallel)
-        next_water
-            .par_iter_mut()
-            .zip(&mut next_load)
-            .enumerate()
-            .for_each(|(y, (row_next_w, row_next_load))| {
-                for x in 0..width {
-                    let mut new_w   = hex_map[y][x].water_depth   - out_rows[y].w[x];
-
-                    let suspended_load = hex_map[y][x].suspended_load;
-                    let out_load = out_rows[y].load[x];
-                    let mut new_load = suspended_load - out_load;
-
-                    // Clamp to avoid runaway depths or negative values
-                    new_w   = new_w.max(0.0);
-                    new_load= new_load.max(0.0);
-
-                    ensure_finite!(new_w, "new_w", x, y, _step);
-                    ensure_finite!(new_load, format!("new_load ({suspended_load} - {out_load})"), x, y, _step);
-
-                    let cur_idx = y * width + x;
-                    let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
-                    for &(dx, dy) in offsets {
-                        let nx = x as i32 + dx as i32;
-                        let ny = y as i32 + dy as i32;
-                        if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 { continue; }
-                        let nxi = nx as usize;
-                        let nyi = ny as usize;
-                        if out_rows[nyi].tgt[nxi] == cur_idx {
-                            new_w   += out_rows[nyi].w   [nxi];
-                            new_load+= out_rows[nyi].load[nxi];
-                        }
-                    }
-
-                    row_next_w[x]    = new_w;
-                    row_next_load[x] = new_load;
-                }
-            });
+        // Download final hex state for CPU phase 4 (erosion, boundary)
+        let gpu_hex = gpu_sim.download_hex_data();
+        for (idx, h) in gpu_hex.iter().enumerate() {
+            let y = idx / width;
+            let x = idx % width;
+            next_water[y][x] = h.water_depth;
+            next_load [y][x] = h.suspended_load;
+            // also update hex_map so Phase 4 uses fresh depths
+            hex_map[y][x].water_depth = h.water_depth;
+            hex_map[y][x].suspended_load = h.suspended_load;
+        }
 
         // 4) Apply next water depths, counting outflow at sea boundary (x == 0)
         for y in 0..height {
@@ -600,6 +529,27 @@ fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>
             }
         }
     }
+}
+
+// --- Helper: apply river inflow at east edge ---
+fn apply_river_inflow(river_y: usize,
+                       hex_map: &mut [Vec<Hex>],
+                       next_water: &mut [Vec<f32>],
+                       next_load: &mut [Vec<f32>],
+                       gpu_sim: &mut GpuSimulation
+) {
+    if river_y >= hex_map.len() { return; }
+    let rx = WIDTH_HEXAGONS as usize - 1;
+    hex_map[river_y][rx].water_depth += RIVER_WATER_PER_STEP;
+    next_water[river_y][rx]         += RIVER_WATER_PER_STEP;
+
+    let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
+    hex_map[river_y][rx].suspended_load += suspended_load_per_step;
+    next_load[river_y][rx]             += suspended_load_per_step;
+
+    let idx = river_y*(WIDTH_HEXAGONS as usize) + (WIDTH_HEXAGONS as usize) - 1;
+    gpu_sim.add_water(idx, RIVER_WATER_PER_STEP);
+    gpu_sim.add_load(idx, suspended_load_per_step);
 }
 
 fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
@@ -788,4 +738,30 @@ fn main() {
     let save_duration = png_start.elapsed();
     println!("Image rendering and saving took: {:?}", save_duration);
     println!("Terrain visualization saved as terrain.png");
+}
+
+#[cfg(test)]
+mod river_tests {
+    use super::*;
+    #[test]
+    fn river_inflow_correct() {
+        let width = WIDTH_HEXAGONS as usize;
+        let height = 3usize;
+        let river_y = 1usize;
+        let mut hex_map: Vec<Vec<Hex>> = (0..height).map(|y| {
+            (0..width).map(|x| Hex{coordinate:(x as u16,y as u16), elevation:0.0, water_depth:0.0, suspended_load:0.0}).collect()
+        }).collect();
+        let mut next_water: Vec<Vec<f32>> = (0..height).map(|_| vec![0.0; width]).collect();
+        let mut next_load: Vec<Vec<f32>>  = (0..height).map(|_| vec![0.0; width]).collect();
+
+        apply_river_inflow(river_y, &mut hex_map, &mut next_water, &mut next_load, &mut gpu_sim);
+        let rx = width-1;
+        assert!((hex_map[river_y][rx].water_depth - RIVER_WATER_PER_STEP).abs() < 1e-6);
+        assert!((next_water[river_y][rx] - RIVER_WATER_PER_STEP).abs() < 1e-6);
+        let expected_load = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
+        assert!((hex_map[river_y][rx].suspended_load - expected_load).abs() < 1e-6);
+        assert!((next_load[river_y][rx] - expected_load).abs() < 1e-6);
+        // ensure neighbouring cell unchanged
+        assert_eq!(hex_map[river_y][rx-1].water_depth, 0.0);
+    }
 }

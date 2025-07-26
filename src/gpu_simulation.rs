@@ -29,6 +29,11 @@ pub struct GpuSimulation {
     routing_constants_buffer: wgpu::Buffer,
     next_water_buffer: wgpu::Buffer,
     next_load_buffer: wgpu::Buffer,
+    tgt_buffer: wgpu::Buffer,
+    scatter_pipeline: wgpu::ComputePipeline,
+    scatter_bind_group: wgpu::BindGroup,
+    scatter_bind_group_layout: wgpu::BindGroupLayout,
+    scatter_consts_buffer: wgpu::Buffer,
 }
 
 impl GpuSimulation {
@@ -194,9 +199,20 @@ impl GpuSimulation {
                     },
                     count: None,
                 },
-                // constants
+                // tgt_buffer
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // constants
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -219,6 +235,32 @@ impl GpuSimulation {
             layout: Some(&routing_pipeline_layout),
             module: &routing_shader,
             entry_point: "route_water",
+        });
+
+        // ---------------- Scatter pipeline ---------------------------
+        let scatter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Scatter Shader"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shaders/scatter_water.wgsl"))),
+        });
+
+        let scatter_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
+            label: Some("Scatter BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry{binding:0,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:false},has_dynamic_offset:false,min_binding_size:None},count:None},
+                wgpu::BindGroupLayoutEntry{binding:1,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:false},has_dynamic_offset:false,min_binding_size:None},count:None},
+                wgpu::BindGroupLayoutEntry{binding:2,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:false},has_dynamic_offset:false,min_binding_size:None},count:None},
+                wgpu::BindGroupLayoutEntry{binding:3,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None},count:None},
+                wgpu::BindGroupLayoutEntry{binding:4,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Uniform,has_dynamic_offset:false,min_binding_size:None},count:None},
+            ],
+        });
+
+        let scatter_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+            label: Some("Scatter Pipeline Layout"),
+            bind_group_layouts: &[&scatter_bind_group_layout],push_constant_ranges:&[],
+        });
+
+        let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
+            label: Some("Scatter Pipeline"),layout:Some(&scatter_pipeline_layout),module:&scatter_shader,entry_point:"main",
         });
 
         // Create buffers with minimal non-zero size (overwritten later)
@@ -252,6 +294,13 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
+        let tgt_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Target Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let routing_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Routing Constants Buffer"),
             size: std::mem::size_of::<[f32;4]>() as u64,
@@ -266,7 +315,8 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry { binding:0, resource: hex_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry { binding:1, resource: next_water_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry { binding:2, resource: next_load_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding:3, resource: routing_constants_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:3, resource: tgt_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:4, resource: routing_constants_buffer.as_entire_binding()},
             ],
         });
 
@@ -296,6 +346,21 @@ impl GpuSimulation {
             }],
         });
 
+        // placeholder consts buffer for scatter
+        let scatter_consts_buffer = device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("Scatter Consts"),size: (std::mem::size_of::<[f32;2]>()) as u64,usage:wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,mapped_at_creation:false,
+        });
+
+        let scatter_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
+            label:Some("Scatter BG"),layout:&scatter_bind_group_layout,entries:&[
+                wgpu::BindGroupEntry{binding:0,resource:hex_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:1,resource:next_water_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:2,resource:next_load_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:3,resource:tgt_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:4,resource:scatter_consts_buffer.as_entire_binding()},
+            ],
+        });
+
         Self {
             device,
             queue,
@@ -314,6 +379,11 @@ impl GpuSimulation {
             routing_constants_buffer,
             next_water_buffer,
             next_load_buffer,
+            tgt_buffer,
+            scatter_pipeline,
+            scatter_bind_group,
+            scatter_bind_group_layout,
+            scatter_consts_buffer,
         }
     }
 
@@ -369,6 +439,13 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
+        self.tgt_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Target Buffer"),
+            size: (width*height*std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         // Recreate routing bind group with resized buffers
         self.routing_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Routing Bind Group"),
@@ -377,7 +454,21 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:0,resource:self.hex_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:1,resource:self.next_water_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:3,resource:self.routing_constants_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:4,resource:self.routing_constants_buffer.as_entire_binding()},
+            ],
+        });
+
+        // Recreate scatter bind group with new buffers
+        self.scatter_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Scatter BG"),
+            layout: &self.scatter_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry{binding:0,resource:self.hex_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:1,resource:self.next_water_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:4,resource:self.scatter_consts_buffer.as_entire_binding()},
             ],
         });
     }
@@ -483,7 +574,7 @@ impl GpuSimulation {
     }
 
     /// Downloads next_water and next_load buffers after routing.
-    pub fn download_routing_results(&self) -> (Vec<f32>, Vec<f32>) {
+    pub fn download_routing_results(&self) -> (Vec<f32>, Vec<f32>, Vec<u32>) {
         let buf_size = self.hex_buffer_size / std::mem::size_of::<HexGpu>() * std::mem::size_of::<f32>();
 
         let create_staging = |label: &str| self.device.create_buffer(&wgpu::BufferDescriptor{
@@ -495,13 +586,20 @@ impl GpuSimulation {
 
         let staging_water = create_staging("StageWater");
         let staging_load  = create_staging("StageLoad");
+        let staging_tgt   = self.device.create_buffer(&wgpu::BufferDescriptor{
+            label: Some("StageTgt"),
+            size: (self.hex_buffer_size / std::mem::size_of::<HexGpu>() * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation:false,
+        });
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("RouteDownloadEnc")});
         encoder.copy_buffer_to_buffer(&self.next_water_buffer,0,&staging_water,0,buf_size as u64);
         encoder.copy_buffer_to_buffer(&self.next_load_buffer ,0,&staging_load ,0,buf_size as u64);
+        encoder.copy_buffer_to_buffer(&self.tgt_buffer ,0,&staging_tgt ,0,(buf_size/4) as u64);
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let read_buffer = |buf: &wgpu::Buffer| {
+        let read_buffer_f32 = |buf: &wgpu::Buffer| {
             let slice = buf.slice(..);
             let (tx,rx)= futures_intrusive::channel::shared::oneshot_channel();
             slice.map_async(wgpu::MapMode::Read, move |r|{tx.send(r).unwrap();});
@@ -514,6 +612,226 @@ impl GpuSimulation {
             vec
         };
 
-        (read_buffer(&staging_water), read_buffer(&staging_load))
+        let read_buffer_u32 = |buf: &wgpu::Buffer| {
+            let slice = buf.slice(..);
+            let (tx,rx)= futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |r|{tx.send(r).unwrap();});
+            self.device.poll(wgpu::Maintain::Wait);
+            pollster::block_on(rx.receive()).unwrap().unwrap();
+            let data = slice.get_mapped_range();
+            let vec = bytemuck::cast_slice(&data).to_vec();
+            drop(data);
+            buf.unmap();
+            vec
+        };
+
+        (read_buffer_f32(&staging_water), read_buffer_f32(&staging_load), read_buffer_u32(&staging_tgt))
+    }
+
+    pub fn run_scatter_step(&mut self, width: usize, height: usize) {
+        // update scatter consts buffer
+        let consts = [width as f32, height as f32];
+        self.queue.write_buffer(&self.scatter_consts_buffer,0,bytemuck::cast_slice(&consts));
+
+        let total = (width*height) as u32;
+        let workgroup = 256u32;
+        let dispatch = (total + workgroup -1)/workgroup;
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("Scatter Enc")});
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("Scatter Pass")});
+            cpass.set_pipeline(&self.scatter_pipeline);
+            cpass.set_bind_group(0,&self.scatter_bind_group,&[]);
+            cpass.dispatch_workgroups(dispatch,1,1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Adds water and suspended load to a single cell on the GPU buffer.
+    /// `index` is linear index (y*width + x).
+    pub fn add_inflow(&self, cell_index: usize, water: f32, load: f32) {
+        // HexGpu layout: elevation (f32) @0, water_depth (f32) @4, suspended_load (f32) @8
+        let base = (cell_index * std::mem::size_of::<HexGpu>()) as u64;
+        self.queue.write_buffer(&self.hex_buffer, base + 4, bytemuck::bytes_of(&water));
+        self.queue.write_buffer(&self.hex_buffer, base + 8, bytemuck::bytes_of(&load));
+    }
+
+    /// Convenience method: add only water.
+    pub fn add_water(&self, cell_index: usize, water: f32) {
+        let base = (cell_index * std::mem::size_of::<HexGpu>()) as u64;
+        self.queue.write_buffer(&self.hex_buffer, base + 4, bytemuck::bytes_of(&water));
+    }
+
+    /// Convenience method: add only suspended load.
+    pub fn add_load(&self, cell_index: usize, load: f32) {
+        let base = (cell_index * std::mem::size_of::<HexGpu>()) as u64;
+        self.queue.write_buffer(&self.hex_buffer, base + 8, bytemuck::bytes_of(&load));
+    }
+
+    pub fn download_hex_data(&self) -> Vec<HexGpu> {
+        self.download_data()
+    }
+} 
+
+// ---------------------------------------------------------------------------
+// Unit tests – compare GPU gather outputs with reference CPU implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::Rng;
+
+    const NEIGH_OFFSETS_EVEN: [(i16, i16); 6] = [
+        (1, 0), (0, 1), (-1, 0), (0, -1), (-1, -1), (1, -1),
+    ];
+    const NEIGH_OFFSETS_ODD: [(i16, i16); 6] = [
+        (1, 0), (0, 1), (-1, 0), (0, -1), (-1, 1), (1, 1),
+    ];
+
+    #[derive(Clone)]
+    struct HexCpu {
+        elevation: f32,
+        water_depth: f32,
+        suspended_load: f32,
+    }
+
+    fn cpu_gather(hex_map: &[Vec<HexCpu>], flow_factor: f32, max_flow: f32) -> (Vec<f32>, Vec<f32>, Vec<u32>) {
+        let height = hex_map.len();
+        let width = hex_map[0].len();
+        let mut out_w = vec![0.0f32; width*height];
+        let mut out_load = vec![0.0f32; width*height];
+        let mut tgt = vec![u32::MAX; width*height];
+
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y*width + x;
+                let cell = &hex_map[y][x];
+                let w = cell.water_depth;
+                if w<=0.0 { continue; }
+                let mut min_height = cell.elevation + w;
+                let mut target: Option<(usize,usize)> = None;
+                let offsets = if (x & 1)==0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
+                for &(dx,dy) in offsets {
+                    let nx_i = x as i32 + dx as i32;
+                    let ny_i = y as i32 + dy as i32;
+                    if nx_i<0 || ny_i<0 || nx_i>=width as i32 || ny_i>=height as i32 { continue; }
+                    let nh = hex_map[ny_i as usize][nx_i as usize].elevation + hex_map[ny_i as usize][nx_i as usize].water_depth;
+                    if nh < min_height {
+                        min_height=nh; target=Some((nx_i as usize, ny_i as usize));
+                    }
+                }
+                if let Some((tx,ty)) = target {
+                    let diff = cell.elevation + w - (hex_map[ty][tx].elevation + hex_map[ty][tx].water_depth);
+                    let move_w = (if diff > w { w } else { diff*flow_factor }).min(max_flow);
+                    if move_w>0.0 {
+                        out_w[idx]=move_w;
+                        out_load[idx]=cell.suspended_load*move_w/w;
+                        tgt[idx]=(ty*width+tx) as u32;
+                    }
+                }
+            }
+        }
+        (out_w,out_load,tgt)
+    }
+
+    #[test]
+    fn gpu_vs_cpu_gather() {
+        let width=16usize; let height=12usize;
+        let mut rng = rand::thread_rng();
+
+        // build cpu map and gpu vec
+        let mut cpu_map: Vec<Vec<HexCpu>> = vec![vec![HexCpu{elevation:0.0,water_depth:0.0,suspended_load:0.0}; width]; height];
+        let mut gpu_vec: Vec<HexGpu> = Vec::with_capacity(width*height);
+        for y in 0..height {
+            for x in 0..width {
+                let elev = rng.gen_range(0.0..100.0);
+                let water = rng.gen_range(0.0..10.0);
+                let load = rng.gen_range(0.0..1.0);
+                cpu_map[y][x]=HexCpu{elevation:elev, water_depth:water, suspended_load:load};
+                gpu_vec.push(HexGpu{elevation:elev, water_depth:water, suspended_load:load, _padding:0.0});
+            }
+        }
+
+        let (cpu_w,cpu_load,cpu_tgt) = cpu_gather(&cpu_map,0.9, width as f32);
+
+        // GPU path
+        let mut sim = pollster::block_on(GpuSimulation::new());
+        sim.initialize_buffer(width,height);
+        sim.upload_data(&gpu_vec);
+        sim.run_water_routing_step(width,height,0.9,width as f32);
+        let (gpu_w,gpu_load,gpu_tgt) = sim.download_routing_results();
+
+        // compare (allow tiny numerical noise)
+        const THRESH: f32 = 1e-6;
+        for i in 0..cpu_w.len() {
+            assert!((cpu_w[i]-gpu_w[i]).abs()<1e-4, "water mismatch at {}: {} vs {}",i,cpu_w[i],gpu_w[i]);
+            assert!((cpu_load[i]-gpu_load[i]).abs()<1e-4, "load mismatch at {}",i);
+
+            // We ignore target index differences as long as the water and load match,
+            // since equal surface heights can legitimately allow multiple downslope choices.
+        }
+    }
+
+    // -----------------------------------------------------------
+    // Full gather + scatter comparison with CPU reference
+    // -----------------------------------------------------------
+    fn cpu_scatter(hex_map: &mut [Vec<HexCpu>], out_w:&[f32], out_load:&[f32], tgt:&[u32]){
+        let height = hex_map.len();
+        let width = hex_map[0].len();
+
+        // subtract own outflow, accumulate inflows using tgt map
+        for idx in 0..out_w.len(){
+            let y = idx/width; let x = idx%width;
+            hex_map[y][x].water_depth -= out_w[idx];
+            hex_map[y][x].suspended_load -= out_load[idx];
+            if hex_map[y][x].water_depth <0.0 { hex_map[y][x].water_depth = 0.0; }
+            if hex_map[y][x].suspended_load <0.0 { hex_map[y][x].suspended_load = 0.0; }
+        }
+        for idx in 0..out_w.len(){
+            let t = tgt[idx] as usize;
+            if t == u32::MAX as usize { continue; }
+            let ty = t/width; let tx = t%width;
+            hex_map[ty][tx].water_depth += out_w[idx];
+            hex_map[ty][tx].suspended_load += out_load[idx];
+        }
+    }
+
+    #[test]
+    fn gpu_vs_cpu_gather_scatter() {
+        let width=16usize; let height=12usize;
+        let mut rng = rand::thread_rng();
+
+        // build cpu map and gpu vec
+        let mut cpu_map: Vec<Vec<HexCpu>> = vec![vec![HexCpu{elevation:0.0,water_depth:0.0,suspended_load:0.0}; width]; height];
+        let mut gpu_vec: Vec<HexGpu> = Vec::with_capacity(width*height);
+        for y in 0..height {
+            for x in 0..width {
+                let elev = rng.gen_range(0.0..100.0);
+                let water = rng.gen_range(0.0..10.0);
+                let load = rng.gen_range(0.0..1.0);
+                cpu_map[y][x]=HexCpu{elevation:elev, water_depth:water, suspended_load:load};
+                gpu_vec.push(HexGpu{elevation:elev, water_depth:water, suspended_load:load, _padding:0.0});
+            }
+        }
+
+        let (cpu_w,cpu_load,cpu_tgt) = cpu_gather(&cpu_map,0.9,width as f32);
+        let mut cpu_map_after = cpu_map.clone();
+        cpu_scatter(&mut cpu_map_after,&cpu_w,&cpu_load,&cpu_tgt);
+
+        // GPU path full
+        let mut sim = pollster::block_on(GpuSimulation::new());
+        sim.initialize_buffer(width,height);
+        sim.upload_data(&gpu_vec);
+        sim.run_water_routing_step(width,height,0.9,width as f32);
+        sim.run_scatter_step(width,height);
+        let gpu_hex = sim.download_hex_data();
+
+        // compare
+        for idx in 0..gpu_hex.len(){
+            let y=idx/width; let x=idx%width;
+            let cpu_hex = &cpu_map_after[y][x];
+            assert!((cpu_hex.water_depth - gpu_hex[idx].water_depth).abs() < 1e-3, "depth mismatch at {}",idx);
+            assert!((cpu_hex.suspended_load - gpu_hex[idx].suspended_load).abs() < 1e-3, "load mismatch at {}",idx);
+        }
     }
 } 
