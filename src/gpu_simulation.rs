@@ -1,5 +1,62 @@
 use bytemuck::{Pod, Zeroable};
 
+// Helper macros for concise bind-group definitions
+use wgpu::BufferUsages as BU;
+
+use crate::{KC, KE, KD, MAX_SLOPE, MAX_ELEVATION, HEX_SIZE};
+
+macro_rules! buf_rw {
+    ($binding:expr, $read_only:expr) => {
+        wgpu::BindGroupLayoutEntry {
+            binding: $binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: $read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    };
+}
+
+macro_rules! uniform_entry {
+    ($binding:expr) => {
+        wgpu::BindGroupLayoutEntry {
+            binding: $binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    };
+}
+
+macro_rules! bg_entry {
+    ($binding:expr, $buffer:expr) => {
+        wgpu::BindGroupEntry {
+            binding: $binding,
+            resource: $buffer.as_entire_binding(),
+        }
+    };
+}
+
+macro_rules! dispatch_compute {
+    ($device:expr, $queue:expr, $pipeline:expr, $bind_group:expr, $invocations:expr) => {{
+        let mut encoder = $device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("compute enc") });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("compute pass") });
+            pass.set_pipeline(&$pipeline);
+            pass.set_bind_group(0, &$bind_group, &[]);
+            pass.dispatch_workgroups($invocations, 1, 1);
+        }
+        $queue.submit(std::iter::once(encoder.finish()));
+    }};
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct HexGpu {
@@ -34,6 +91,15 @@ pub struct GpuSimulation {
     scatter_bind_group: wgpu::BindGroup,
     scatter_bind_group_layout: wgpu::BindGroupLayout,
     scatter_consts_buffer: wgpu::Buffer,
+    min_elev_buffer: wgpu::Buffer,
+    min_neigh_pipeline: wgpu::ComputePipeline,
+    min_neigh_bind: wgpu::BindGroup,
+    erosion_pipeline: wgpu::ComputePipeline,
+    erosion_bind: wgpu::BindGroup,
+    erosion_params: wgpu::Buffer,
+    min_layout: wgpu::BindGroupLayout,
+    min_consts_buf: wgpu::Buffer,
+    eros_layout: wgpu::BindGroupLayout,
 }
 
 impl GpuSimulation {
@@ -361,6 +427,67 @@ impl GpuSimulation {
             ],
         });
 
+        // ---- min_elev_buffer ----
+        let mut min_elev_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("min_elev"),
+            size : 4,                          // resized later
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation:false,
+        });
+
+        // ---- min_neigh pipeline ----
+        let min_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor{
+            label:Some("min shader"),
+            source:wgpu::ShaderSource::Wgsl(include_str!("shaders/min_neigh.wgsl").into())
+        });
+        let min_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
+            label:Some("min BGL"),
+            entries:&[
+              buf_rw!(0,false),                // hex_data
+              buf_rw!(1,false),                // min_elev (write)
+              uniform_entry!(2),
+            ]});
+        let min_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+            label:Some("min layout"), bind_group_layouts:&[&min_bgl], push_constant_ranges:&[]});
+        let min_neigh_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
+            label:Some("min pipe"), layout:Some(&min_layout), module:&min_shader, entry_point:"main"});
+        let consts_buf = device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("min consts"), size:8, usage:BU::UNIFORM|BU::COPY_DST, mapped_at_creation:false});
+        let min_neigh_bind = device.create_bind_group(&wgpu::BindGroupDescriptor{
+            label:Some("min BG"), layout:&min_bgl, entries:&[
+                bg_entry!(0,&hex_buffer),
+                bg_entry!(1,&min_elev_buffer),
+                bg_entry!(2,&consts_buf),
+        ]});
+
+        // ---- erosion pipeline ----
+        let eros_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor{
+            label:Some("erosion shader"),
+            source:wgpu::ShaderSource::Wgsl(include_str!("shaders/erosion.wgsl").into())
+        });
+        let eros_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
+            label:Some("erosion BGL"),
+            entries:&[
+              buf_rw!(0,false),            // hex_data
+              buf_rw!(1,true),             // min_elev (read)
+              uniform_entry!(2),
+        ]});
+        let eros_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+            label:Some("eros layout"), bind_group_layouts:&[&eros_bgl], push_constant_ranges:&[] });
+        let erosion_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
+            label:Some("eros pipe"), layout:Some(&eros_layout), module:&eros_shader, entry_point:"main"});
+        let erosion_params = device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("eros params"), size:24, usage:BU::UNIFORM|BU::COPY_DST, mapped_at_creation:false});
+        let erosion_bind = device.create_bind_group(&wgpu::BindGroupDescriptor{
+            label:Some("eros BG"), layout:&eros_bgl, entries:&[
+                bg_entry!(0,&hex_buffer),
+                bg_entry!(1,&min_elev_buffer),
+                bg_entry!(2,&erosion_params),
+        ]});
+
+        let min_layout_clone = min_bgl;
+        let eros_layout_clone = eros_bgl;
+
         Self {
             device,
             queue,
@@ -384,6 +511,15 @@ impl GpuSimulation {
             scatter_bind_group,
             scatter_bind_group_layout,
             scatter_consts_buffer,
+            min_elev_buffer,
+            min_neigh_pipeline,
+            min_neigh_bind,
+            erosion_pipeline,
+            erosion_bind,
+            erosion_params,
+            min_layout: min_layout_clone,
+            min_consts_buf: consts_buf,
+            eros_layout: eros_layout_clone,
         }
     }
 
@@ -471,6 +607,9 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:4,resource:self.scatter_consts_buffer.as_entire_binding()},
             ],
         });
+
+        // Resize min_elev_buffer (call after initialize_buffer).
+        self.resize_min_buffers(width, height);
     }
 
     pub fn upload_data(&self, data: &[HexGpu]) {
@@ -665,6 +804,59 @@ impl GpuSimulation {
     pub fn add_load(&self, cell_index: usize, load: f32) {
         let base = (cell_index * std::mem::size_of::<HexGpu>()) as u64;
         self.queue.write_buffer(&self.hex_buffer, base + 8, bytemuck::bytes_of(&load));
+    }
+
+    // --------------------------------------------------------------
+    // New helpers for min-neighbour + erosion GPU passes
+    // --------------------------------------------------------------
+
+    /// Resize the min_elev_buffer (call after initialize_buffer).
+    pub fn resize_min_buffers(&mut self, width: usize, height: usize) {
+        let size = (width * height * std::mem::size_of::<f32>()) as u64;
+        self.min_elev_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("min_elev"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        self.min_neigh_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("min BG"),
+            layout: &self.min_layout,
+            entries: &[
+                bg_entry!(0,&self.hex_buffer),
+                bg_entry!(1,&self.min_elev_buffer),
+                bg_entry!(2,&self.min_consts_buf),
+            ],
+        });
+
+        self.erosion_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("eros BG"),
+            layout: &self.eros_layout,
+            entries: &[
+                bg_entry!(0,&self.hex_buffer),
+                bg_entry!(1,&self.min_elev_buffer),
+                bg_entry!(2,&self.erosion_params),
+            ],
+        });
+    }
+
+    /// Compute minimum neighbour elevation (one pass).
+    pub fn run_min_neigh_step(&self, width: usize, height: usize) {
+        let consts = [width as f32, height as f32];
+        self.queue.write_buffer(&self.min_consts_buf, 0, bytemuck::cast_slice(&consts));
+        let total = (width * height) as u32;
+        let groups = (total + 255) / 256;
+        dispatch_compute!(self.device, self.queue, self.min_neigh_pipeline, self.min_neigh_bind, groups);
+    }
+
+    /// Run erosion/deposition per cell.
+    pub fn run_erosion_step(&self, width: usize, height: usize) {
+        let params: [f32; 6] = [KC, KE, KD, MAX_SLOPE, MAX_ELEVATION, HEX_SIZE];
+        self.queue.write_buffer(&self.erosion_params, 0, bytemuck::cast_slice(&params));
+        let total = (width * height) as u32;
+        let groups = (total + 255) / 256;
+        dispatch_compute!(self.device, self.queue, self.erosion_pipeline, self.erosion_bind, groups);
     }
 
     pub fn download_hex_data(&self) -> Vec<HexGpu> {

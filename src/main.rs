@@ -221,30 +221,11 @@ fn simulate_rainfall(
     // ---------------------------------------------------------
     let mut gpu_sim = pollster::block_on(GpuSimulation::new());
     gpu_sim.initialize_buffer(width, height);
+    gpu_sim.resize_min_buffers(width, height);
 
     let mut total_outflow = 0.0f32;
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
-
-    // Reusable buffer for next water depths
-    let mut next_water: Vec<Vec<f32>> = (0..height)
-        .map(|_| vec![0.0f32; width])
-        .collect();
-
-    // Reusable buffer for sediment transport (same layout)
-    let mut next_load: Vec<Vec<f32>> = (0..height)
-        .map(|_| vec![0.0f32; width])
-        .collect();
-
-    // Buffer storing minimum neighbour elevation for each cell
-    let mut min_neigh_elev: Vec<Vec<f32>> = (0..height)
-        .map(|_| vec![0.0f32; width])
-        .collect();
-
-    // Reusable buffer for elevation deltas (angle-of-repose)
-    let mut delta_elev: Vec<Vec<f32>> = (0..height)
-        .map(|_| vec![0.0f32; width])
-        .collect();
 
     // --- Buffers for parallel water-routing (gather→scatter) ---
     #[derive(Clone)]
@@ -254,52 +235,12 @@ fn simulate_rainfall(
         tgt:  Vec<usize>,
     }
 
-    let mut out_rows: Vec<RowOut> = (0..height)
-        .map(|_| RowOut {
-            w:    vec![0.0f32; width],
-            load: vec![0.0f32; width],
-            tgt:  vec![NO_TARGET; width],
-        })
-        .collect();
-
     for _step in 0..steps {
         // Mass balance stats per step
         let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
         let mut step_outflow = 0.0f32;
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
-
-        // 0) Pre-compute min neighbour elevation in parallel (for slope calc)
-        min_neigh_elev
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(y, row)| {
-                let y_i = y as i32;
-                let width_i = width as i32;
-                let height_i = height as i32;
-                let src_row = &hex_map[y];
-                for x in 0..width {
-                    let cell_elev = src_row[x].elevation;
-                    let offsets = if (x & 1) == 0 {
-                        &NEIGH_OFFSETS_EVEN
-                    } else {
-                        &NEIGH_OFFSETS_ODD
-                    };
-                    let mut min_n = cell_elev;
-                    for &(dx, dy) in offsets {
-                        let nx = x as i32 + dx as i32;
-                        let ny = y_i + dy as i32;
-                        if nx < 0 || nx >= width_i || ny < 0 || ny >= height_i {
-                            continue;
-                        }
-                        let n_elev = hex_map[ny as usize][nx as usize].elevation;
-                        if n_elev < min_n {
-                            min_n = n_elev;
-                        }
-                    }
-                    row[x] = min_n;
-                }
-            });
 
         // 1) Add rainfall uniformly – GPU implementation
         {
@@ -327,88 +268,51 @@ fn simulate_rainfall(
             }
         }
 
+        // GPU water routing --------------------------------------------------
+        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
+        gpu_sim.run_scatter_step(width, height);
+        // --- GPU min-slope + erosion/deposition passes ---
+        gpu_sim.run_min_neigh_step(width, height);
+        gpu_sim.run_erosion_step(width, height);
+
+        // Download hex data after all GPU passes for CPU-side logic
+        let gpu_hex_data = gpu_sim.download_hex_data();
+        for (idx, h) in gpu_hex_data.iter().enumerate() {
+            let y = idx / width;
+            let x = idx % width;
+            let cell = &mut hex_map[y][x];
+            cell.elevation = h.elevation;
+            cell.water_depth = h.water_depth;
+            cell.suspended_load = h.suspended_load;
+        }
+
+        // Apply ocean boundary condition on the west edge (x == 0)
+        for y in 0..height {
+            let cell = &mut hex_map[y][0];
+            let target_depth = (SEA_LEVEL - cell.elevation).max(0.0);
+            if cell.water_depth > target_depth {
+                let surplus = cell.water_depth - target_depth;
+                total_outflow += surplus;
+                step_outflow += surplus;
+            }
+            total_sediment_out += cell.suspended_load;
+            step_sediment_out += cell.suspended_load;
+
+            cell.water_depth = target_depth;
+            cell.suspended_load = 0.0; // Flushed to sea
+
+            // --- FIX: Update the GPU buffer to reflect the outflow ---
+            let cell_idx = y * width; // x is always 0
+            gpu_sim.add_inflow(cell_idx, cell.water_depth, cell.suspended_load);
+        }
+
         // 1b) Add river inflow at east edge AFTER GPU routing scatter so it isn't overwritten
         if river_y < height {
-            apply_river_inflow(river_y, hex_map, &mut next_water, &mut next_load, &mut gpu_sim);
+            apply_river_inflow(river_y, hex_map, &mut gpu_sim);
             let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
             step_sediment_in += suspended_load_per_step;
             total_sediment_in += suspended_load_per_step;
         }
-
-        // GPU water routing --------------------------------------------------
-        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
-        gpu_sim.run_scatter_step(width, height);
-
-        // Download final hex state for CPU phase 4 (erosion, boundary)
-        let gpu_hex = gpu_sim.download_hex_data();
-        for (idx, h) in gpu_hex.iter().enumerate() {
-            let y = idx / width;
-            let x = idx % width;
-            next_water[y][x] = h.water_depth;
-            next_load [y][x] = h.suspended_load;
-            // also update hex_map so Phase 4 uses fresh depths
-            hex_map[y][x].water_depth = h.water_depth;
-            hex_map[y][x].suspended_load = h.suspended_load;
-        }
-
-        // 4) Apply next water depths, counting outflow at sea boundary (x == 0)
-        for y in 0..height {
-            for x in 0..width {
-                let new_w = next_water[y][x];
-                let new_load = next_load[y][x];
-                if x == 0 {
-                    // West edge: ocean boundary keeps water_surface = SEA_LEVEL
-                    let target_depth = (SEA_LEVEL - hex_map[y][x].elevation).max(0.0);
-                    // Any water above that level leaves the domain
-                    if new_w > target_depth {
-                        let surplus = new_w - target_depth;
-                        total_outflow += surplus;
-                        step_outflow += surplus;
-                    }
-                    // Set water depth to ocean equilibrium
-                    hex_map[y][x].water_depth = target_depth;
-
-                    total_sediment_out += hex_map[y][x].suspended_load;
-                    step_sediment_out += hex_map[y][x].suspended_load;
-                    hex_map[y][x].suspended_load = 0.0; // flushed to sea
-                } else {
-                    // First gather immutable info
-                    let cell_elev = hex_map[y][x].elevation;
-                    let min_n = min_neigh_elev[y][x];
-
-                    // Now mutate cell safely
-                    let cell = &mut hex_map[y][x];
-                    cell.water_depth = new_w;
-                    cell.suspended_load = new_load;
-
-                    let slope = ((cell_elev - min_n) / HEX_SIZE).max(0.0);
-                    ensure_finite!(slope, format!("slope (({cell_elev} - {min_n}) / {HEX_SIZE})"), x, y, _step);
-
-                    let capacity = KC * cell.water_depth * slope.min(MAX_SLOPE);
-                    ensure_finite!(capacity, "capacity", x, y, _step);
-
-                    // TODO: Small refactor to de-dupe.
-                    if cell.suspended_load < capacity {
-                        // erode
-                        let diff   = capacity - cell.suspended_load;
-                        let amount = KE * diff;
-                        ensure_finite!(amount, "erosion", x, y, _step);
-                        cell.elevation      -= amount;
-                        cell.suspended_load += amount;
-                    } else {
-                        // deposit
-                        let diff   = cell.suspended_load - capacity;
-                        let amount = (KD * diff).min(MAX_ELEVATION - cell.elevation);
-                        ensure_finite!(amount, "deposition", x, y, _step);
-                        cell.elevation      += amount;
-                        cell.suspended_load -= amount;
-                    }
-                }
-            }
-        }
-
-        // 4b) Angle-of-repose adjustment (slope limit) – no fresh allocations
-        enforce_angle_of_repose(hex_map, &mut delta_elev);
 
         if _step % (WIDTH_HEXAGONS as u32) == (WIDTH_HEXAGONS as u32) - 1 {
             let cells_above_sea_level: usize = hex_map
@@ -452,9 +356,9 @@ fn simulate_rainfall(
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
             let round = _step / (WIDTH_HEXAGONS as u32);
 
-            render_frame(hex_map, frame_buffer, river_y);
-            save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-            save_png("terrain.png", hex_map);
+            // render_frame(hex_map, frame_buffer, river_y);
+            // save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            // save_png("terrain.png", hex_map);
 
             println!(
                 "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.3}  sediment out {:.3}",
@@ -534,18 +438,14 @@ fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>
 // --- Helper: apply river inflow at east edge ---
 fn apply_river_inflow(river_y: usize,
                        hex_map: &mut [Vec<Hex>],
-                       next_water: &mut [Vec<f32>],
-                       next_load: &mut [Vec<f32>],
                        gpu_sim: &mut GpuSimulation
 ) {
     if river_y >= hex_map.len() { return; }
     let rx = WIDTH_HEXAGONS as usize - 1;
     hex_map[river_y][rx].water_depth += RIVER_WATER_PER_STEP;
-    next_water[river_y][rx]         += RIVER_WATER_PER_STEP;
 
     let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
     hex_map[river_y][rx].suspended_load += suspended_load_per_step;
-    next_load[river_y][rx]             += suspended_load_per_step;
 
     let idx = river_y*(WIDTH_HEXAGONS as usize) + (WIDTH_HEXAGONS as usize) - 1;
     gpu_sim.add_water(idx, RIVER_WATER_PER_STEP);
