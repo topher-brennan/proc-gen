@@ -1,9 +1,8 @@
 use bytemuck::{Pod, Zeroable};
+use crate::constants::*;
 
 // Helper macros for concise bind-group definitions
 use wgpu::BufferUsages as BU;
-
-use crate::{KC, KE, KD, MAX_SLOPE, MAX_ELEVATION, HEX_SIZE};
 
 macro_rules! buf_rw {
     ($binding:expr, $read_only:expr) => {
@@ -428,7 +427,7 @@ impl GpuSimulation {
         });
 
         // ---- min_elev_buffer ----
-        let mut min_elev_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let min_elev_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("min_elev"),
             size : 4,                          // resized later
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,

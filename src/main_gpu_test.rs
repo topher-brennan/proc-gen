@@ -1,6 +1,8 @@
 mod gpu_simulation;
 use gpu_simulation::{GpuSimulation, HexGpu};
 use pollster;
+mod constants;
+use constants::*;
 
 fn main() {
     // Initialize GPU simulation

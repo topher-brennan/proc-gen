@@ -1,0 +1,19 @@
+
+pub const KC: f32 = HEX_SIZE / 100.0; // capacity coefficient
+pub const KE: f32 = 0.05;  // erosion rate fraction
+pub const KD: f32 = 0.05;  // deposition rate fraction
+pub const FLOW_FACTOR: f32 = 0.9;
+pub const MAX_SLOPE: f32 = 1.0; // Prevents runaway erosion by capping slope used in capacity calc
+pub const MAX_FLOW: f32 = WIDTH_HEXAGONS as f32;
+pub const MAX_ELEVATION: f32 = (WIDTH_HEXAGONS as f32) * 4.0 + HEX_SIZE / 100.0;
+pub const SEA_LEVEL: f32 = (WIDTH_HEXAGONS as f32) * 2.0;
+pub const HEX_SIZE: f32 = 2640.0; // Feet
+pub const RIVER_WATER_PER_STEP: f32 = 37.1; // Feet
+pub const RIVER_LOAD_FACTOR: f32 = 1.2;
+pub const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
+pub const DEFAULT_ROUNDS: u32 = 1000;
+pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
+pub const WIDTH_HEXAGONS: u16 = (WIDTH_PIXELS as f32 / HEX_FACTOR) as u16;
+pub const HEIGHT_PIXELS: u16 = 216;
+pub const WIDTH_PIXELS: u16 = 384;
+pub const HEX_FACTOR: f32 = 0.8660254037844386; 

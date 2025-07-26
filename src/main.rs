@@ -6,6 +6,8 @@ use image::{RgbImage};
 mod gpu_simulation;
 use gpu_simulation::{GpuSimulation, HexGpu};
 use pollster;
+mod constants;
+use constants::*;
 
 // Helper macro to detect NaN / Inf as early as possible and crash with context.
 // I've been using step -1 to indicate that the value is not associated with a step,
@@ -46,96 +48,11 @@ const NEIGH_OFFSETS_ODD: [(i16, i16); 6] = [
     (1, 1),  // 4 o'clock (south-east)
 ];
 
-// Sentinel indicating no downslope target during water-routing
-const NO_TARGET: usize = usize::MAX;
-
-// const HEIGHT_PIXELS: u16 = 2160;
-// const WIDTH_PIXELS: u16 = 3840;
-const HEIGHT_PIXELS: u16 = 216;
-const WIDTH_PIXELS: u16 = 384;
-
-// Approximate value of sqrt(3) / 2
-// Useful because if the length of a perpendicular line segment connecting two
-// sides of a regular hexagon is 1, then the length of a line segment
-// connecting the corners of the hexagon is 2 / sqrt(3), and the side length is
-// 1 / sqrt(3). These values are equal to 2 * sqrt(3) / 3 and sqrt(3) / 3,
-// respectively, so their average is ([2 + 1] * sqrt(3)) / 3 / 2 = sqrt(3) / 2
-// This is the area and average width of the hexagon.
-const HEX_FACTOR: f32 = 0.8660254037844386;
-
-// Assume 1 pixel per hex vertically, and HEX_FACTOR pixels per hex horizontally.
-// const WIDTH_HEXAGONS: u16 = 4434;
-const WIDTH_HEXAGONS: u16 = (WIDTH_PIXELS as f32 / HEX_FACTOR) as u16;
-
-// This combined wtih some other things keeps the starting coastline in the middle of the map.
-const SEA_LEVEL: f32 = (WIDTH_HEXAGONS as f32) * 2.0;
-// This can be used to convert volume from foot-hexes to cubic feet.
-const HEX_SIZE: f32 = 2640.0; // Feet
-// One hour worth of average discharge from the Aswan Dam.
-const RIVER_WATER_PER_STEP: f32 = 37.1; // Feet
-// I *think* this should be the elevation-drop-per-hex that gives us a steady state,
-// but now I'm worried I did my math wrong.
-const RIVER_LOAD_FACTOR: f32 = 1.2;
-// One inch of rain per year - desert conditions.
-const RAIN_PER_STEP: f32 = 1.0 / 12.0 / 365.0 / 24.0; // Feet
-const DEFAULT_ROUNDS: u32 = 1000; // default number of "rounds" (each = WIDTH_HEXAGONS steps)
-const WATER_THRESHOLD: f32 = 1.0 / 12.0; // One inch in feet
-
-// --- Minimal erosion / deposition constants ---
-// Questioning the decision to divide by HEX_SIZE in errosion calculations.
-const KC: f32 = HEX_SIZE / 100.0; // capacity coefficient
-const KE: f32 = 0.05;  // erosion rate fraction
-const KD: f32 = 0.05;  // deposition rate fraction
-// How large FLOW_FACTOR can be without erroding the sea floor seems related to
-// KE and KD, but I'm not sure of the exact relationship.
-const FLOW_FACTOR: f32 = 0.9;
-const MAX_SLOPE: f32 = 1.0; // Prevents runaway erosion by capping slope used in capacity calc
-const MAX_FLOW: f32 = WIDTH_HEXAGONS as f32;
-const MAX_ELEVATION: f32 = (WIDTH_HEXAGONS as f32) * 4.0 + HEX_SIZE / 100.0;
-
 struct Hex {
     coordinate: (u16, u16),
     elevation: f32, // Feet
     water_depth: f32, // Feet of water currently stored in this hex
     suspended_load: f32, // Feet of sediment stored in water column
-}
-
-// Returns the 6 neighbors of a hexagon, assuming a "columns line up" layout,
-// such that (0, 1) is at the "6 o'clock" of (0, 0), and (1, 0) is at the
-// "4 o'clock" of (0, 0).
-fn hex_neighbors(coordinate: (u16, u16)) -> Vec<(u16, u16)> {
-    let mut neighbors = Vec::new();
-    neighbors.push((coordinate.0.wrapping_add(1), coordinate.1));
-    neighbors.push((coordinate.0, coordinate.1.wrapping_add(1)));
-    neighbors.push((coordinate.0.wrapping_sub(1), coordinate.1));
-    neighbors.push((coordinate.0, coordinate.1.wrapping_sub(1)));
-
-    if (coordinate.0 % 2) == 0 {
-        // (x-1, y) and (x+1, y) represent the "4 o'clock" and "8 o'clock", so
-        // we need the "2 o'clock" and "10 o'clock" neighbors.
-        neighbors.push((coordinate.0.wrapping_sub(1), coordinate.1.wrapping_sub(1)));
-        neighbors.push((coordinate.0.wrapping_add(1), coordinate.1.wrapping_sub(1)));
-    } else {
-        // (x-1, y) and (x+1, y) represent the "2 o'clock" and "10 o'clock", so
-        // we need the "4 o'clock" and "8 o'clock" neighbors.
-        neighbors.push((coordinate.0.wrapping_sub(1), coordinate.1.wrapping_add(1)));
-        neighbors.push((coordinate.0.wrapping_add(1), coordinate.1.wrapping_add(1)));
-    }
-
-    filter_coordinates(neighbors)
-}
-
-// TODO: This might be me being used to languages with more syntactic sugar,
-// but I wonder if there's a more concise/idiomatic way to do this.
-// Make sure x >= 0, x < WIDTH_HEXAGONS, y >= 0, y < HEIGHT_PIXELS
-fn filter_coordinates(coordinates: Vec<(u16, u16)>) -> Vec<(u16, u16)> {
-    let mut filtered = Vec::new();
-    for (x, y) in coordinates {
-        if x < WIDTH_HEXAGONS && y < HEIGHT_PIXELS {
-            filtered.push((x, y));
-        }
-    }
-    filtered
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
@@ -208,7 +125,6 @@ fn simulate_rainfall(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
     river_y: usize,
-    frame_buffer: &mut Vec<u32>,
 ) {
     let height = hex_map.len();
     if height == 0 {
@@ -226,14 +142,6 @@ fn simulate_rainfall(
     let mut total_outflow = 0.0f32;
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
-
-    // --- Buffers for parallel water-routing (gather→scatter) ---
-    #[derive(Clone)]
-    struct RowOut {
-        w:    Vec<f32>,
-        load: Vec<f32>,
-        tgt:  Vec<usize>,
-    }
 
     for _step in 0..steps {
         // Mass balance stats per step
@@ -386,53 +294,6 @@ fn simulate_rainfall(
         "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
         steps, total_outflow, water_remaining, total_sediment_in, total_sediment_out
     );
-}
-
-//---------------------------------------------------------------------
-// Enforce that no cell is more than HEX_SIZE ft higher than any neighbour
-//---------------------------------------------------------------------
-fn enforce_angle_of_repose(hex_map: &mut Vec<Vec<Hex>>, delta: &mut Vec<Vec<f32>>) {
-    let height = hex_map.len();
-    let width = hex_map[0].len();
-
-    // zero the delta buffer
-    delta.par_iter_mut().for_each(|row| row.fill(0.0));
-
-    for y in 0..height {
-        for x in 0..width {
-            let elev = hex_map[y][x].elevation;
-            ensure_finite!(elev, "elevation", x, y, -1);
-            let offsets = if (x & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
-            for &(dx, dy) in offsets {
-                let nx = x as i32 + dx as i32;
-                let ny = y as i32 + dy as i32;
-                if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
-                    continue;
-                }
-                let nelev = hex_map[ny as usize][nx as usize].elevation;
-                ensure_finite!(nelev, "neighbour elevation", nx as usize, ny as usize, -1);
-                let diff = elev - nelev;
-                if diff > HEX_SIZE {
-                    // Divide by 7 to avoid nonsense if a hex receives "rockslides"
-                    // from multiple neighbours.
-                    let excess = (diff - HEX_SIZE) / 7.0;
-                    delta[y][x] -= excess;
-                    delta[ny as usize][nx as usize] += excess;
-                }
-            }
-        }
-    }
-
-    // Apply deltas in a separate pass
-    for y in 0..height {
-        for x in 0..width {
-            let d = delta[y][x];
-            if d != 0.0 {
-                hex_map[y][x].elevation += d;
-                ensure_finite!(hex_map[y][x].elevation, format!("elevation (after delta {d})"), x, y, -1);
-            }
-        }
-    }
 }
 
 // --- Helper: apply river inflow at east edge ---
@@ -617,7 +478,7 @@ fn main() {
 
     // Maybe KC should be around 0.00574 to harmonize these?
     let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
-    simulate_rainfall(&mut hex_map, total_steps, river_y, &mut frame_buffer);
+    simulate_rainfall(&mut hex_map, total_steps, river_y);
 
     // Count final blue pixels for quick sanity check
     let final_blue = frame_buffer
