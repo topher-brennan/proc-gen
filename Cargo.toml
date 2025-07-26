@@ -2,6 +2,7 @@
 name = "proc-gen"
 version = "0.1.0"
 edition = "2021"
+default-run = "proc-gen"
 
 [dependencies]
 image = "0.24"
@@ -12,3 +13,7 @@ wgpu = { version = "0.17", features = ["wgsl"] }
 bytemuck = { version = "1.13", features = ["derive"] }
 pollster = "0.3"
 futures-intrusive = "0.4" 
+
+[[bin]]
+name = "main_gpu_test"
+path = "src/main_gpu_test.rs" 

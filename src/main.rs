@@ -3,6 +3,9 @@ use image::{ImageBuffer, Rgb};
 use std::time::Instant;
 use rayon::prelude::*;
 use image::{RgbImage};
+mod gpu_simulation;
+use gpu_simulation::{GpuSimulation, HexGpu};
+use pollster;
 
 // Helper macro to detect NaN / Inf as early as possible and crash with context.
 // I've been using step -1 to indicate that the value is not associated with a step,
@@ -213,6 +216,12 @@ fn simulate_rainfall(
     }
     let width = hex_map[0].len();
 
+    // ---------------------------------------------------------
+    // GPU helper initialisation (only used for rainfall phase)
+    // ---------------------------------------------------------
+    let mut gpu_sim = pollster::block_on(GpuSimulation::new());
+    gpu_sim.initialize_buffer(width, height);
+
     let mut total_outflow = 0.0f32;
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
@@ -292,13 +301,31 @@ fn simulate_rainfall(
                 }
             });
 
-        // 1) Add rainfall uniformly (parallel over rows)
-        hex_map.par_iter_mut().for_each(|row| {
-            for hex in row {
-                // TODO: Add some randomness to the rainfall.
-                hex.water_depth += RAIN_PER_STEP;
+        // 1) Add rainfall uniformly – GPU implementation
+        {
+            let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
+            for row in hex_map.iter() {
+                for h in row {
+                    gpu_data.push(HexGpu {
+                        elevation: h.elevation,
+                        water_depth: h.water_depth,
+                        suspended_load: h.suspended_load,
+                        _padding: 0.0,
+                    });
+                }
             }
-        });
+
+            gpu_sim.upload_data(&gpu_data);
+            gpu_sim.run_rainfall_step(RAIN_PER_STEP, width * height);
+            let updated = gpu_sim.download_data();
+
+            // Write back updated water depths
+            for (idx, ghex) in updated.iter().enumerate() {
+                let y = idx / width;
+                let x = idx % width;
+                hex_map[y][x].water_depth = ghex.water_depth;
+            }
+        }
 
         // 1b) Add river inflow at east edge (x = WIDTH_HEXAGONS-1)
         if river_y < height {

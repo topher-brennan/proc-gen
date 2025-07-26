@@ -28,8 +28,8 @@ fn main() {
     // Upload data to GPU
     gpu_sim.upload_data(&test_data);
     
-    // Run one simulation step
-    gpu_sim.run_simulation_step(width, height);
+    // Run one rainfall step using the new GPU compute pass
+    gpu_sim.run_rainfall_step(0.00001, total_cells); // use same scale as CPU RAIN_PER_STEP
     
     // Download results
     let results = gpu_sim.download_data();

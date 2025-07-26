@@ -1,4 +1,3 @@
-use wgpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
 
 #[repr(C)]
@@ -18,6 +17,11 @@ pub struct GpuSimulation {
     compute_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
+    // Rainfall specific pipeline and resources
+    rainfall_pipeline: wgpu::ComputePipeline,
+    rainfall_bind_group_layout: wgpu::BindGroupLayout,
+    rainfall_bind_group: wgpu::BindGroup,
+    rain_constants_buffer: wgpu::Buffer,
 }
 
 impl GpuSimulation {
@@ -40,15 +44,18 @@ impl GpuSimulation {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    features: wgpu::Features::empty(),
+                    limits: wgpu::Limits::default(),
                 },
                 None,
             )
             .await
             .expect("Failed to create device");
 
-        // Create compute shader
+        // --------------------------------------------------
+        // Generic placeholder compute shader (currently does
+        // a simple rainfall increment; kept for compatibility)
+        // --------------------------------------------------
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("simulation.wgsl"))),
@@ -85,8 +92,58 @@ impl GpuSimulation {
             entry_point: "main",
         });
 
-        // Create buffer (will be initialized later)
-        let hex_buffer_size = 0;
+        // --------------------------------------------------
+        // Rainfall pipeline (uniform + hex storage buffer)
+        // --------------------------------------------------
+
+        let rainfall_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Rainfall Shader"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shaders/rainfall.wgsl"))),
+        });
+
+        let rainfall_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Rainfall Bind Group Layout"),
+            entries: &[
+                // Storage buffer with hexes
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Uniform buffer with constants
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let rainfall_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Rainfall Pipeline Layout"),
+            bind_group_layouts: &[&rainfall_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let rainfall_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Rainfall Pipeline"),
+            layout: Some(&rainfall_pipeline_layout),
+            module: &rainfall_shader,
+            entry_point: "add_rainfall",
+        });
+
+        // Create buffer with minimal non-zero size (overwritten later)
+        let hex_buffer_size = std::mem::size_of::<HexGpu>();
         let hex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Hex Buffer"),
             size: hex_buffer_size as u64,
@@ -94,7 +151,31 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
-        // Create bind group
+        // Constants buffer (rain_per_step, hex_count)
+        let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Rainfall Constants Buffer"),
+            size: std::mem::size_of::<[f32; 2]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create rainfall bind group (will be recreated in initialize_buffer)
+        let rainfall_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Rainfall Bind Group"),
+            layout: &rainfall_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: hex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: rain_constants_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Original generic bind group (storage only)
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Bind Group"),
             layout: &bind_group_layout,
@@ -112,6 +193,10 @@ impl GpuSimulation {
             compute_pipeline,
             bind_group_layout,
             bind_group,
+            rainfall_pipeline,
+            rainfall_bind_group_layout,
+            rainfall_bind_group,
+            rain_constants_buffer,
         }
     }
 
@@ -134,6 +219,22 @@ impl GpuSimulation {
                 binding: 0,
                 resource: self.hex_buffer.as_entire_binding(),
             }],
+        });
+
+        // Recreate rainfall bind group with new hex buffer
+        self.rainfall_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Rainfall Bind Group"),
+            layout: &self.rainfall_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.hex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.rain_constants_buffer.as_entire_binding(),
+                },
+            ],
         });
     }
 
@@ -188,6 +289,33 @@ impl GpuSimulation {
         compute_pass.dispatch_workgroups(width as u32, height as u32, 1);
 
         drop(compute_pass);
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Adds uniform rainfall to every cell using a compute shader.
+    pub fn run_rainfall_step(&mut self, rain_per_step: f32, total_cells: usize) {
+        // Update constants buffer
+        let constants = [rain_per_step, total_cells as f32];
+        self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&constants));
+
+        // Determine dispatch size (workgroup_size = 256)
+        let workgroup_size: u32 = 256;
+        let dispatch_x = ((total_cells as u32) + workgroup_size - 1) / workgroup_size;
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Rainfall Encoder"),
+        });
+
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Rainfall Pass"),
+            });
+
+            cpass.set_pipeline(&self.rainfall_pipeline);
+            cpass.set_bind_group(0, &self.rainfall_bind_group, &[]);
+            cpass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 } 
