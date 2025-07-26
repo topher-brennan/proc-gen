@@ -1,0 +1,125 @@
+struct Hex {
+    elevation: f32,
+    water_depth: f32,
+    suspended_load: f32,
+    _padding: f32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> hex_data: array<Hex>;
+
+@group(0) @binding(1)
+var<storage, read_write> next_water: array<f32>;
+
+@group(0) @binding(2)
+var<storage, read_write> next_load: array<f32>;
+
+@group(0) @binding(3)
+var<uniform> constants: Constants;
+
+struct Constants {
+    width: f32,
+    height: f32,
+    flow_factor: f32,
+    max_flow: f32,
+}
+
+// Neighbor offsets for even columns
+const NEIGH_OFFSETS_EVEN: array<vec2<i32>, 6> = array<vec2<i32>, 6>(
+    vec2<i32>(1, 0),   // 4 o'clock (east)
+    vec2<i32>(0, 1),   // 6 o'clock (south)
+    vec2<i32>(-1, 0),  // 8 o'clock (west)
+    vec2<i32>(0, -1),  // 12 o'clock (north)
+    vec2<i32>(-1, -1), // 10 o'clock (north-west)
+    vec2<i32>(1, -1),  // 2 o'clock (north-east)
+);
+
+// Neighbor offsets for odd columns
+const NEIGH_OFFSETS_ODD: array<vec2<i32>, 6> = array<vec2<i32>, 6>(
+    vec2<i32>(1, 0),   // 2 o'clock (east)
+    vec2<i32>(0, 1),   // 6 o'clock (south)
+    vec2<i32>(-1, 0),  // 10 o'clock (west)
+    vec2<i32>(0, -1),  // 12 o'clock (north)
+    vec2<i32>(-1, 1),  // 8 o'clock (south-west)
+    vec2<i32>(1, 1),   // 4 o'clock (south-east)
+);
+
+fn get_neighbor_coord(x: i32, y: i32, offset: vec2<i32>) -> vec2<i32> {
+    return vec2<i32>(x + offset.x, y + offset.y);
+}
+
+fn is_valid_coord(x: i32, y: i32) -> bool {
+    return x >= 0 && x < i32(constants.width) && y >= 0 && y < i32(constants.height);
+}
+
+fn get_hex_index(x: i32, y: i32) -> u32 {
+    return u32(y * i32(constants.width) + x);
+}
+
+@compute @workgroup_size(256)
+fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    let width = u32(constants.width);
+    let height = u32(constants.height);
+    let total_hexes = width * height;
+    
+    if (index >= total_hexes) {
+        return;
+    }
+    
+    let x = i32(index % width);
+    let y = i32(index / width);
+    
+    let hex = hex_data[index];
+    let w = hex.water_depth;
+    
+    if (w <= 0.0) {
+        next_water[index] = 0.0;
+        next_load[index] = 0.0;
+        return;
+    }
+    
+    // Find lowest neighbor
+    let mut min_height = hex.elevation + w;
+    let mut target_x = x;
+    let mut target_y = y;
+    
+    let offsets = select(NEIGH_OFFSETS_ODD, NEIGH_OFFSETS_EVEN, (x & 1) == 0);
+    
+    for (var i = 0u; i < 6u; i = i + 1u) {
+        let offset = offsets[i];
+        let nx = x + offset.x;
+        let ny = y + offset.y;
+        
+        if (is_valid_coord(nx, ny)) {
+            let n_index = get_hex_index(nx, ny);
+            let n_hex = hex_data[n_index];
+            let nh = n_hex.elevation + n_hex.water_depth;
+            
+            if (nh < min_height) {
+                min_height = nh;
+                target_x = nx;
+                target_y = ny;
+            }
+        }
+    }
+    
+    // Calculate flow
+    if (target_x != x || target_y != y) {
+        let target_index = get_hex_index(target_x, target_y);
+        let target_hex = hex_data[target_index];
+        let diff = hex.elevation + w - (target_hex.elevation + target_hex.water_depth);
+        let move_w = min(select(w, diff * constants.flow_factor, diff > w), constants.max_flow);
+        
+        if (move_w > 0.0) {
+            next_water[index] = move_w;
+            next_load[index] = hex.suspended_load * move_w / w;
+        } else {
+            next_water[index] = 0.0;
+            next_load[index] = 0.0;
+        }
+    } else {
+        next_water[index] = 0.0;
+        next_load[index] = 0.0;
+    }
+} 

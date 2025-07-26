@@ -7,4 +7,8 @@ edition = "2021"
 image = "0.24"
 rand = "0.8"
 rayon = "1"
-minifb = "0.24" 
+minifb = "0.24"
+wgpu = { version = "0.17", features = ["wgsl"] }
+bytemuck = { version = "1.13", features = ["derive"] }
+pollster = "0.3"
+futures-intrusive = "0.4" 
