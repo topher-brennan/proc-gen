@@ -528,7 +528,7 @@ fn simulate_rainfall(
             save_png("terrain.png", hex_map);
 
             println!(
-                "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.2}  sediment out {:.2}",
+                "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.3}  sediment out {:.3}",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
                 step_outflow,

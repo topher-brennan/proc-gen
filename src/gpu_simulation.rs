@@ -22,6 +22,13 @@ pub struct GpuSimulation {
     rainfall_bind_group_layout: wgpu::BindGroupLayout,
     rainfall_bind_group: wgpu::BindGroup,
     rain_constants_buffer: wgpu::Buffer,
+    // Water-routing resources
+    routing_pipeline: wgpu::ComputePipeline,
+    routing_bind_group_layout: wgpu::BindGroupLayout,
+    routing_bind_group: wgpu::BindGroup,
+    routing_constants_buffer: wgpu::Buffer,
+    next_water_buffer: wgpu::Buffer,
+    next_load_buffer: wgpu::Buffer,
 }
 
 impl GpuSimulation {
@@ -142,7 +149,79 @@ impl GpuSimulation {
             entry_point: "add_rainfall",
         });
 
-        // Create buffer with minimal non-zero size (overwritten later)
+        // --------------------------------------------------
+        // Water routing pipeline (uses separate buffers)
+        // --------------------------------------------------
+
+        let routing_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Water Routing Shader"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shaders/water_routing.wgsl"))),
+        });
+
+        let routing_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Routing BGL"),
+            entries: &[
+                // hex_data
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // next_water
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // next_load
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // constants
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let routing_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Routing Pipeline Layout"),
+            bind_group_layouts: &[&routing_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let routing_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Water Routing Pipeline"),
+            layout: Some(&routing_pipeline_layout),
+            module: &routing_shader,
+            entry_point: "route_water",
+        });
+
+        // Create buffers with minimal non-zero size (overwritten later)
         let hex_buffer_size = std::mem::size_of::<HexGpu>();
         let hex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Hex Buffer"),
@@ -151,12 +230,44 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
-        // Constants buffer (rain_per_step, hex_count)
+        // Constants buffer (rain_per_step, hex_count) – rainfall shader
         let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Constants Buffer"),
             size: std::mem::size_of::<[f32; 2]>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });
+
+        let next_water_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Next Water Buffer"),
+            size: 4, // placeholder 1 f32
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let next_load_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Next Load Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let routing_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Routing Constants Buffer"),
+            size: std::mem::size_of::<[f32;4]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let routing_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Routing Bind Group"),
+            layout: &routing_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding:0, resource: hex_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:1, resource: next_water_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:2, resource: next_load_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:3, resource: routing_constants_buffer.as_entire_binding()},
+            ],
         });
 
         // Create rainfall bind group (will be recreated in initialize_buffer)
@@ -197,6 +308,12 @@ impl GpuSimulation {
             rainfall_bind_group_layout,
             rainfall_bind_group,
             rain_constants_buffer,
+            routing_pipeline,
+            routing_bind_group_layout,
+            routing_bind_group,
+            routing_constants_buffer,
+            next_water_buffer,
+            next_load_buffer,
         }
     }
 
@@ -234,6 +351,33 @@ impl GpuSimulation {
                     binding: 1,
                     resource: self.rain_constants_buffer.as_entire_binding(),
                 },
+            ],
+        });
+
+        // Resize next_water / next_load buffers
+        let buf_bytes = (width*height*std::mem::size_of::<f32>()) as u64;
+        self.next_water_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Next Water Buffer"),
+            size: buf_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        self.next_load_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Next Load Buffer"),
+            size: buf_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Recreate routing bind group with resized buffers
+        self.routing_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Routing Bind Group"),
+            layout: &self.routing_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry{binding:0,resource:self.hex_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:1,resource:self.next_water_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:3,resource:self.routing_constants_buffer.as_entire_binding()},
             ],
         });
     }
@@ -317,5 +461,59 @@ impl GpuSimulation {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Run water routing kernel and leave results in next buffers. Optionally download.
+    pub fn run_water_routing_step(&mut self, width: usize, height: usize, flow_factor: f32, max_flow: f32) {
+        let consts = [width as f32, height as f32, flow_factor, max_flow];
+        self.queue.write_buffer(&self.routing_constants_buffer, 0, bytemuck::cast_slice(&consts));
+
+        let workgroup_size: u32 = 256;
+        let total = (width*height) as u32;
+        let dispatch_x = (total + workgroup_size -1)/workgroup_size;
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("Routing Encoder")});
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("Routing Pass")});
+            cpass.set_pipeline(&self.routing_pipeline);
+            cpass.set_bind_group(0,&self.routing_bind_group,&[]);
+            cpass.dispatch_workgroups(dispatch_x,1,1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Downloads next_water and next_load buffers after routing.
+    pub fn download_routing_results(&self) -> (Vec<f32>, Vec<f32>) {
+        let buf_size = self.hex_buffer_size / std::mem::size_of::<HexGpu>() * std::mem::size_of::<f32>();
+
+        let create_staging = |label: &str| self.device.create_buffer(&wgpu::BufferDescriptor{
+            label: Some(label),
+            size: buf_size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation:false,
+        });
+
+        let staging_water = create_staging("StageWater");
+        let staging_load  = create_staging("StageLoad");
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("RouteDownloadEnc")});
+        encoder.copy_buffer_to_buffer(&self.next_water_buffer,0,&staging_water,0,buf_size as u64);
+        encoder.copy_buffer_to_buffer(&self.next_load_buffer ,0,&staging_load ,0,buf_size as u64);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let read_buffer = |buf: &wgpu::Buffer| {
+            let slice = buf.slice(..);
+            let (tx,rx)= futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |r|{tx.send(r).unwrap();});
+            self.device.poll(wgpu::Maintain::Wait);
+            pollster::block_on(rx.receive()).unwrap().unwrap();
+            let data = slice.get_mapped_range();
+            let vec = bytemuck::cast_slice(&data).to_vec();
+            drop(data);
+            buf.unmap();
+            vec
+        };
+
+        (read_buffer(&staging_water), read_buffer(&staging_load))
     }
 } 

@@ -79,15 +79,35 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // Find lowest neighbor
-    let mut min_height = hex.elevation + w;
-    let mut target_x = x;
-    let mut target_y = y;
+    // Find lowest neighbor (variables must be mutable, use 'var')
+    var min_height: f32 = hex.elevation + w;
+    var target_x: i32 = x;
+    var target_y: i32 = y;
     
-    let offsets = select(NEIGH_OFFSETS_ODD, NEIGH_OFFSETS_EVEN, (x & 1) == 0);
-    
+    let even_col = (x & 1) == 0;
     for (var i = 0u; i < 6u; i = i + 1u) {
-        let offset = offsets[i];
+        var offset: vec2<i32> = vec2<i32>(0, 0);
+        if (even_col) {
+            switch(i) {
+                case 0u: { offset = vec2<i32>(1, 0); }
+                case 1u: { offset = vec2<i32>(0, 1); }
+                case 2u: { offset = vec2<i32>(-1, 0); }
+                case 3u: { offset = vec2<i32>(0, -1); }
+                case 4u: { offset = vec2<i32>(-1, -1); }
+                case 5u: { offset = vec2<i32>(1, -1); }
+                default: {}
+            }
+        } else {
+            switch(i) {
+                case 0u: { offset = vec2<i32>(1, 0); }
+                case 1u: { offset = vec2<i32>(0, 1); }
+                case 2u: { offset = vec2<i32>(-1, 0); }
+                case 3u: { offset = vec2<i32>(0, -1); }
+                case 4u: { offset = vec2<i32>(-1, 1); }
+                case 5u: { offset = vec2<i32>(1, 1); }
+                default: {}
+            }
+        }
         let nx = x + offset.x;
         let ny = y + offset.y;
         
