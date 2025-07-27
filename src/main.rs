@@ -183,7 +183,7 @@ fn simulate_rainfall(
             total_sediment_in += suspended_load_per_step;
         }
 
-        if _step % (WIDTH_HEXAGONS as u32) == (WIDTH_HEXAGONS as u32) - 1 {
+        if _step % (WIDTH_HEXAGONS as u32 * 10) == (WIDTH_HEXAGONS as u32) - 1 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -206,7 +206,7 @@ fn simulate_rainfall(
                     let mut sum = 0.0f32;
                     let mut row_max = 0.0f32;
                     for h in row {
-                        if h.elevation > SEA_LEVEL {
+                        if h.coordinate.0 > WIDTH_HEXAGONS / 2 as u16 {
                             let d = h.water_depth;
                             sum += d;
                             if d > row_max {
@@ -236,10 +236,10 @@ fn simulate_rainfall(
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
             let round = _step / (WIDTH_HEXAGONS as u32);
 
-            // let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
-            // render_frame(hex_map, frame_buffer, river_y);
-            // save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-            // save_png("terrain.png", hex_map);
+            let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
+            render_frame(hex_map, &mut frame_buffer, river_y);
+            save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            save_png("terrain.png", hex_map);
 
             println!(
                 "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.3}  sediment out {:.3}",
