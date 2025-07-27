@@ -32,12 +32,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var cell = hex_data[idx];
 
     // Slope and capacity
-    let slope = max((cell.elevation - min_elev[idx]) / P.hex_size, 0.0);
+    let slope = max((cell.elevation + cell.water_depth - min_elev[idx]) / P.hex_size, 0.0);
     let capacity = P.kc * cell.water_depth * min(slope, P.max_slope);
 
     if (cell.suspended_load < capacity) {
         // erode
-        let amount = P.ke * (capacity - cell.suspended_load);
+        // TODO: Look for better ways to prevent sea floor from being eroded below 0?
+        let amount = min(P.ke * (capacity - cell.suspended_load), max(cell.elevation - P.hex_size / 100.0, 0.0));
         cell.elevation      -= amount;
         cell.suspended_load += amount;
     } else {

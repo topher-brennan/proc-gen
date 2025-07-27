@@ -165,25 +165,23 @@ fn simulate_rainfall(
         gpu_sim.run_rainfall_step(RAIN_PER_STEP, width * height);
         // We no longer pull data back to the CPU each step – the GPU holds authoritative state.
 
+
         // GPU water routing --------------------------------------------------
         gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
         gpu_sim.run_scatter_step(width, height);
+
+        // TODO: For the next two calls, is it possible to get water / sediment flows from GPU for diagnostic purposes?
+        // Ocean boundary condition on GPU – fast version (no CPU read-back)
+        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
+        // GPU river source updater --------------------------------------------
+        let source_idx = (river_y * width + (width - 1)) as u32;
+        gpu_sim.run_river_source_update(source_idx);
+
         // --- GPU min-slope + erosion/deposition passes ---
         gpu_sim.run_min_neigh_step(width, height);
         gpu_sim.run_erosion_step(width, height);
 
-        // Ocean boundary condition on GPU – fast version (no CPU read-back)
-        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
-
-        // 1b) Add river inflow at east edge AFTER GPU routing scatter so it isn't overwritten
-        if river_y < height {
-            apply_river_inflow(river_y, &mut gpu_sim);
-            let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
-            step_sediment_in += suspended_load_per_step;
-            total_sediment_in += suspended_load_per_step;
-        }
-
-        if _step % (WIDTH_HEXAGONS as u32 * 10) == (WIDTH_HEXAGONS as u32) - 1 {
+        if _step % (WIDTH_HEXAGONS as u32 * 20) == (WIDTH_HEXAGONS as u32) - 1 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -234,26 +232,78 @@ fn simulate_rainfall(
                 .sum();
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
+
+            // TODO: This indicates sources never gets eroded, need to fix that.
+            let source_hex = &hex_map[river_y][WIDTH_HEXAGONS as usize - 1];
+
+            // --- Compute river path average water depth ---
+            let mut cx = WIDTH_HEXAGONS as usize - 1;
+            let mut cy = river_y;
+            let mut river_sum = 0.0f32;
+            let mut river_count = 0usize;
+
+            loop {
+                if cx < WIDTH_HEXAGONS as usize / 2 {
+                    break;
+                }
+
+                let cell = &hex_map[cy][cx];
+                river_sum += cell.water_depth;
+                river_count += 1;
+
+                if river_count > 1000 {
+                    println!("River path too long, stopping at {} cells", river_count);
+                    break; // prevent infinite loop
+                }
+
+                if cell.elevation < SEA_LEVEL {
+                    break; // reached sea
+                }
+
+                let offsets = if (cx & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
+                let mut min_elev = cell.elevation;
+                let mut next = None;
+                for &(dx, dy) in offsets {
+                    let nx_i = cx as i32 + dx as i32;
+                    let ny_i = cy as i32 + dy as i32;
+                    if nx_i < 0 || ny_i < 0 || nx_i >= WIDTH_HEXAGONS as i32 || ny_i >= HEIGHT_PIXELS as i32 {
+                        continue;
+                    }
+                    let ncell = &hex_map[ny_i as usize][nx_i as usize];
+                    if ncell.elevation < min_elev {
+                        min_elev = ncell.elevation;
+                        next = Some((nx_i as usize, ny_i as usize));
+                    }
+                }
+                match next {
+                    Some((nx, ny)) if nx != cx || ny != cy => { cx = nx; cy = ny; }
+                    _ => break, // no lower neighbor found, prevent infinite loop
+                }
+            }
+
+            let river_avg_depth = if river_count > 0 {
+                river_sum / river_count as f32
+            } else { 0.0 };
+
             let round = _step / (WIDTH_HEXAGONS as u32);
 
-            let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
-            render_frame(hex_map, &mut frame_buffer, river_y);
-            save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-            save_png("terrain.png", hex_map);
-
             println!(
-                "Round {:.0}: water in {:.1}  water out {:.1}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  sediment in {:.3}  sediment out {:.3}",
+                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  river avg depth {:.2} ft",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
-                step_outflow,
                 water_on_land,
                 mean_depth,
                 max_depth,
                 wet_cells,
                 wet_cells_percentage,
-                step_sediment_in,
-                step_sediment_out,
+                source_hex.elevation,
+                river_avg_depth,
             );
+
+            let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
+            render_frame(hex_map, &mut frame_buffer, river_y);
+            save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            save_png("terrain.png", hex_map);
         }
     }
 

@@ -47,7 +47,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
     let x = i32(index % u32(C.width));
     let y = i32(index / u32(C.width));
 
-    var m = hex_data[index].elevation;
+    var m = hex_data[index].elevation + hex_data[index].water_depth;
     let even = (x & 1) == 0;
 
     for (var k:u32 = 0u; k < 6u; k = k + 1u) {
@@ -76,7 +76,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         let nx = x + off.x;
         let ny = y + off.y;
         if (!inside(nx, ny)) { continue; }
-        let elev = hex_data[idx(nx, ny)].elevation;
+        let elev = hex_data[idx(nx, ny)].elevation + hex_data[idx(nx, ny)].water_depth;
         if (elev < m) { m = elev; }
     }
 
