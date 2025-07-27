@@ -126,11 +126,8 @@ fn simulate_rainfall(
     steps: u32,
     river_y: usize,
 ) {
-    let height = hex_map.len();
-    if height == 0 {
-        return;
-    }
-    let width = hex_map[0].len();
+    let height = HEIGHT_PIXELS as usize;
+    let width = WIDTH_HEXAGONS as usize;
 
     // ---------------------------------------------------------
     // GPU helper initialisation (only used for rainfall phase)
@@ -150,21 +147,22 @@ fn simulate_rainfall(
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
 
+        let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
+        for row in hex_map.iter() {
+            for h in row {
+                gpu_data.push(HexGpu {
+                    elevation: h.elevation,
+                    water_depth: h.water_depth,
+                    suspended_load: h.suspended_load,
+                    _padding: 0.0,
+                });
+            }
+        }
+
+        gpu_sim.upload_data(&gpu_data);
+
         // 1) Add rainfall uniformly – GPU implementation
         {
-            let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
-            for row in hex_map.iter() {
-                for h in row {
-                    gpu_data.push(HexGpu {
-                        elevation: h.elevation,
-                        water_depth: h.water_depth,
-                        suspended_load: h.suspended_load,
-                        _padding: 0.0,
-                    });
-                }
-            }
-
-            gpu_sim.upload_data(&gpu_data);
             gpu_sim.run_rainfall_step(RAIN_PER_STEP, width * height);
             let updated = gpu_sim.download_data();
 
