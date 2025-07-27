@@ -65,6 +65,15 @@ pub struct HexGpu {
     pub _padding: f32, // Ensure 16-byte alignment
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct OutGpu {
+    pub water_out: f32,
+    pub sediment_out: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
+}
+
 pub struct GpuSimulation {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -99,6 +108,12 @@ pub struct GpuSimulation {
     min_layout: wgpu::BindGroupLayout,
     min_consts_buf: wgpu::Buffer,
     eros_layout: wgpu::BindGroupLayout,
+    // --- ocean boundary resources ---
+    ocean_pipeline: wgpu::ComputePipeline,
+    ocean_bind_group_layout: wgpu::BindGroupLayout,
+    ocean_bind_group: wgpu::BindGroup,
+    ocean_params_buffer: wgpu::Buffer,
+    ocean_out_buffer: wgpu::Buffer,
 }
 
 impl GpuSimulation {
@@ -484,6 +499,58 @@ impl GpuSimulation {
                 bg_entry!(2,&erosion_params),
         ]});
 
+        // ---- ocean boundary pipeline ----
+        let ocean_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Ocean Boundary Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ocean_boundary.wgsl").into()),
+        });
+
+        let ocean_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Ocean Boundary BGL"),
+            entries: &[
+                buf_rw!(0,false), // hex_data
+                uniform_entry!(1), // params
+                buf_rw!(2,false), // outflow buffer
+            ],
+        });
+
+        let ocean_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Ocean Boundary Pipeline Layout"),
+            bind_group_layouts: &[&ocean_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let ocean_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Ocean Boundary Pipeline"),
+            layout: Some(&ocean_pipeline_layout),
+            module: &ocean_shader,
+            entry_point: "main",
+        });
+
+        let ocean_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Params Buffer"),
+            size: std::mem::size_of::<[f32;4]>() as u64,
+            usage: BU::UNIFORM | BU::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let ocean_out_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Out Buffer"),
+            size: 4u64, // placeholder, resized later
+            usage: BU::STORAGE | BU::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let ocean_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ocean Boundary BG"),
+            layout: &ocean_bind_group_layout,
+            entries: &[
+                bg_entry!(0,&hex_buffer),
+                bg_entry!(1,&ocean_params_buffer),
+                bg_entry!(2,&ocean_out_buffer),
+            ],
+        });
+
         let min_layout_clone = min_bgl;
         let eros_layout_clone = eros_bgl;
 
@@ -519,6 +586,12 @@ impl GpuSimulation {
             min_layout: min_layout_clone,
             min_consts_buf: consts_buf,
             eros_layout: eros_layout_clone,
+            // --- ocean boundary resources ---
+            ocean_pipeline,
+            ocean_bind_group_layout,
+            ocean_bind_group,
+            ocean_params_buffer,
+            ocean_out_buffer,
         }
     }
 
@@ -604,6 +677,24 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:4,resource:self.scatter_consts_buffer.as_entire_binding()},
+            ],
+        });
+
+        // --- Resize ocean out buffer and bind group ---
+        self.ocean_out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Out Buffer"),
+            size: (height * std::mem::size_of::<OutGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        self.ocean_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Ocean Boundary BG"),
+            layout: &self.ocean_bind_group_layout,
+            entries: &[
+                bg_entry!(0,&self.hex_buffer),
+                bg_entry!(1,&self.ocean_params_buffer),
+                bg_entry!(2,&self.ocean_out_buffer),
             ],
         });
 
@@ -856,6 +947,57 @@ impl GpuSimulation {
         let total = (width * height) as u32;
         let groups = (total + 255) / 256;
         dispatch_compute!(self.device, self.queue, self.erosion_pipeline, self.erosion_bind, groups);
+    }
+
+    pub fn run_ocean_boundary(&mut self, width: usize, height: usize, sea_level: f32) -> (f32, f32) {
+        // Update params buffer: [sea_level, height, width, pad]
+        let params = [sea_level, height as f32, width as f32, 0.0f32];
+        self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&params));
+
+        // Dispatch compute – one thread per row along west edge
+        let total_invocations = height as u32;
+        let workgroup = 256u32;
+        let dispatch_x = (total_invocations + workgroup - 1) / workgroup;
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Ocean Boundary Encoder") });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Ocean Boundary Pass") });
+            cpass.set_pipeline(&self.ocean_pipeline);
+            cpass.set_bind_group(0, &self.ocean_bind_group, &[]);
+            cpass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Read back outflow buffer (height entries)
+        let buf_size = (height * std::mem::size_of::<OutGpu>()) as u64;
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Outflow Staging"),
+            size: buf_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Ocean Copy Enc") });
+        enc.copy_buffer_to_buffer(&self.ocean_out_buffer, 0, &staging, 0, buf_size);
+        self.queue.submit(std::iter::once(enc.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+        self.device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(rx.receive()).unwrap().unwrap();
+        let data = slice.get_mapped_range();
+        let vec: Vec<OutGpu> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+
+        let mut total_water = 0.0f32;
+        let mut total_sed = 0.0f32;
+        for o in vec {
+            total_water += o.water_out;
+            total_sed += o.sediment_out;
+        }
+        (total_water, total_sed)
     }
 
     pub fn download_hex_data(&self) -> Vec<HexGpu> {

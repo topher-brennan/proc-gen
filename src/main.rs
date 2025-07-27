@@ -162,17 +162,8 @@ fn simulate_rainfall(
         let mut step_sediment_out = 0.0f32;
 
         // 1) Add rainfall uniformly – GPU implementation
-        {
-            gpu_sim.run_rainfall_step(RAIN_PER_STEP, width * height);
-            let updated = gpu_sim.download_data();
-
-            // Write back updated water depths
-            for (idx, ghex) in updated.iter().enumerate() {
-                let y = idx / width;
-                let x = idx % width;
-                hex_map[y][x].water_depth = ghex.water_depth;
-            }
-        }
+        gpu_sim.run_rainfall_step(RAIN_PER_STEP, width * height);
+        // We no longer pull data back to the CPU each step – the GPU holds authoritative state.
 
         // GPU water routing --------------------------------------------------
         gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
@@ -181,46 +172,33 @@ fn simulate_rainfall(
         gpu_sim.run_min_neigh_step(width, height);
         gpu_sim.run_erosion_step(width, height);
 
-        // Download hex data after all GPU passes for CPU-side logic
-        let gpu_hex_data = gpu_sim.download_hex_data();
-        for (idx, h) in gpu_hex_data.iter().enumerate() {
-            let y = idx / width;
-            let x = idx % width;
-            let cell = &mut hex_map[y][x];
-            cell.elevation = h.elevation;
-            cell.water_depth = h.water_depth;
-            cell.suspended_load = h.suspended_load;
-        }
-
-        // Apply ocean boundary condition on the west edge (x == 0)
-        for y in 0..height {
-            let cell = &mut hex_map[y][0];
-            let target_depth = (SEA_LEVEL - cell.elevation).max(0.0);
-            if cell.water_depth > target_depth {
-                let surplus = cell.water_depth - target_depth;
-                total_outflow += surplus;
-                step_outflow += surplus;
-            }
-            total_sediment_out += cell.suspended_load;
-            step_sediment_out += cell.suspended_load;
-
-            cell.water_depth = target_depth;
-            cell.suspended_load = 0.0; // Flushed to sea
-
-            // --- FIX: Update the GPU buffer to reflect the outflow ---
-            let cell_idx = y * width; // x is always 0
-            gpu_sim.add_inflow(cell_idx, cell.water_depth, cell.suspended_load);
-        }
+        // Ocean boundary condition on GPU – returns outflow totals
+        let (water_out, sediment_out) = gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
+        step_outflow += water_out;
+        total_outflow += water_out;
+        step_sediment_out += sediment_out;
+        total_sediment_out += sediment_out;
 
         // 1b) Add river inflow at east edge AFTER GPU routing scatter so it isn't overwritten
         if river_y < height {
-            apply_river_inflow(river_y, hex_map, &mut gpu_sim);
+            apply_river_inflow(river_y, &mut gpu_sim);
             let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
             step_sediment_in += suspended_load_per_step;
             total_sediment_in += suspended_load_per_step;
         }
 
         if _step % (WIDTH_HEXAGONS as u32) == (WIDTH_HEXAGONS as u32) - 1 {
+            // Download hex data after all GPU passes for CPU-side logic
+            let gpu_hex_data = gpu_sim.download_hex_data();
+            for (idx, h) in gpu_hex_data.iter().enumerate() {
+                let y = idx / width;
+                let x = idx % width;
+                let cell = &mut hex_map[y][x];
+                cell.elevation = h.elevation;
+                cell.water_depth = h.water_depth;
+                cell.suspended_load = h.suspended_load;
+            }
+
             let cells_above_sea_level: usize = hex_map
                 .par_iter()
                 .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL).count())
@@ -262,6 +240,7 @@ fn simulate_rainfall(
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
             let round = _step / (WIDTH_HEXAGONS as u32);
 
+            // let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
             // render_frame(hex_map, frame_buffer, river_y);
             // save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             // save_png("terrain.png", hex_map);
@@ -295,16 +274,9 @@ fn simulate_rainfall(
 }
 
 // --- Helper: apply river inflow at east edge ---
-fn apply_river_inflow(river_y: usize,
-                       hex_map: &mut [Vec<Hex>],
-                       gpu_sim: &mut GpuSimulation
+fn apply_river_inflow(river_y: usize, gpu_sim: &mut GpuSimulation
 ) {
-    if river_y >= hex_map.len() { return; }
-    let rx = WIDTH_HEXAGONS as usize - 1;
-    hex_map[river_y][rx].water_depth += RIVER_WATER_PER_STEP;
-
     let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
-    hex_map[river_y][rx].suspended_load += suspended_load_per_step;
 
     let idx = river_y*(WIDTH_HEXAGONS as usize) + (WIDTH_HEXAGONS as usize) - 1;
     gpu_sim.add_water(idx, RIVER_WATER_PER_STEP);
