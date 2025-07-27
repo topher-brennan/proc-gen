@@ -949,7 +949,30 @@ impl GpuSimulation {
         dispatch_compute!(self.device, self.queue, self.erosion_pipeline, self.erosion_bind, groups);
     }
 
-    pub fn run_ocean_boundary(&mut self, width: usize, height: usize, sea_level: f32) -> (f32, f32) {
+    /// Run ocean boundary compute pass without reading data back to the CPU.
+    /// This is significantly faster and should be used in the tight simulation loop.
+    pub fn run_ocean_boundary(&mut self, width: usize, height: usize, sea_level: f32) {
+        // Update params buffer: [sea_level, height, width, pad]
+        let params = [sea_level, height as f32, width as f32, 0.0f32];
+        self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&params));
+
+        // Dispatch compute – one thread per row along west edge
+        let total_invocations = height as u32;
+        let workgroup = 256u32;
+        let dispatch_x = (total_invocations + workgroup - 1) / workgroup;
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Ocean Boundary Encoder") });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Ocean Boundary Pass") });
+            cpass.set_pipeline(&self.ocean_pipeline);
+            cpass.set_bind_group(0, &self.ocean_bind_group, &[]);
+            cpass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Legacy helper that also downloads per-row outflow totals. Use only for debugging/profiling.
+    pub fn run_ocean_boundary_readback(&mut self, width: usize, height: usize, sea_level: f32) -> (f32, f32) {
         // Update params buffer: [sea_level, height, width, pad]
         let params = [sea_level, height as f32, width as f32, 0.0f32];
         self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&params));

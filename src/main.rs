@@ -172,12 +172,8 @@ fn simulate_rainfall(
         gpu_sim.run_min_neigh_step(width, height);
         gpu_sim.run_erosion_step(width, height);
 
-        // Ocean boundary condition on GPU – returns outflow totals
-        let (water_out, sediment_out) = gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
-        step_outflow += water_out;
-        total_outflow += water_out;
-        step_sediment_out += sediment_out;
-        total_sediment_out += sediment_out;
+        // Ocean boundary condition on GPU – fast version (no CPU read-back)
+        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
 
         // 1b) Add river inflow at east edge AFTER GPU routing scatter so it isn't overwritten
         if river_y < height {
