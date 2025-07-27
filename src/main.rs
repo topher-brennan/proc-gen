@@ -140,26 +140,26 @@ fn simulate_rainfall(
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
 
+    let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
+    for row in hex_map.iter() {
+        for h in row {
+            gpu_data.push(HexGpu {
+                elevation: h.elevation,
+                water_depth: h.water_depth,
+                suspended_load: h.suspended_load,
+                _padding: 0.0,
+            });
+        }
+    }
+
+    gpu_sim.upload_data(&gpu_data);
+
     for _step in 0..steps {
         // Mass balance stats per step
         let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
         let mut step_outflow = 0.0f32;
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
-
-        let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
-        for row in hex_map.iter() {
-            for h in row {
-                gpu_data.push(HexGpu {
-                    elevation: h.elevation,
-                    water_depth: h.water_depth,
-                    suspended_load: h.suspended_load,
-                    _padding: 0.0,
-                });
-            }
-        }
-
-        gpu_sim.upload_data(&gpu_data);
 
         // 1) Add rainfall uniformly – GPU implementation
         {
