@@ -2,7 +2,7 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _padding: f32,
+    rainfall: f32,
 }
 
 @group(0) @binding(0)
@@ -12,7 +12,6 @@ var<storage, read_write> hex_data: array<Hex>;
 var<uniform> constants: Constants;
 
 struct Constants {
-    rain_per_step: f32,
     hex_count: f32,
 }
 
@@ -23,6 +22,6 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // Add rainfall to water depth
-    hex_data[index].water_depth += constants.rain_per_step;
+    // Add per-cell rainfall value to water depth
+    hex_data[index].water_depth += hex_data[index].rainfall;
 } 

@@ -62,7 +62,7 @@ pub struct HexGpu {
     pub elevation: f32,
     pub water_depth: f32,
     pub suspended_load: f32,
-    pub _padding: f32, // Ensure 16-byte alignment
+    pub rainfall: f32, // per-hex rainfall depth per step
 }
 
 #[repr(C)]
@@ -119,6 +119,15 @@ pub struct GpuSimulation {
     river_bgl: wgpu::BindGroupLayout,
     river_bind: wgpu::BindGroup,
     river_params_buf: wgpu::Buffer,
+    // --- repose (angle-of-repose) resources ---
+    delta_buffer: wgpu::Buffer,
+    repose_pipeline: wgpu::ComputePipeline,
+    repose_bgl: wgpu::BindGroupLayout,
+    repose_bind: wgpu::BindGroup,
+    repose_consts_buf: wgpu::Buffer,
+    apply_pipeline: wgpu::ComputePipeline,
+    apply_bgl: wgpu::BindGroupLayout,
+    apply_bind: wgpu::BindGroup,
 }
 
 impl GpuSimulation {
@@ -369,7 +378,7 @@ impl GpuSimulation {
         // Constants buffer (rain_per_step, hex_count) – rainfall shader
         let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Constants Buffer"),
-            size: std::mem::size_of::<[f32; 2]>() as u64,
+            size: std::mem::size_of::<[f32; 4]>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -608,6 +617,93 @@ impl GpuSimulation {
             ],
         });
 
+        // ---- repose (angle-of-repose) resources ----
+        let delta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Delta Buffer"),
+            size: 4, // placeholder, resized later
+            usage: BU::STORAGE | BU::COPY_SRC | BU::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let repose_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Repose Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/repose_deltas.wgsl").into()),
+        });
+
+        let repose_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Repose BGL"),
+            entries: &[
+                buf_rw!(0, true),  // hex_data (read-only)
+                buf_rw!(1, false), // delta buffer (atomic read-write)
+                uniform_entry!(2), // constants
+            ],
+        });
+
+        let repose_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Repose Pipeline Layout"),
+            bind_group_layouts: &[&repose_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let repose_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Repose Pipeline"),
+            layout: Some(&repose_pipeline_layout),
+            module: &repose_shader,
+            entry_point: "main",
+        });
+
+        let repose_consts_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Repose Consts Buffer"),
+            size: std::mem::size_of::<[f32; 4]>() as u64, // 16-byte aligned
+            usage: BU::UNIFORM | BU::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let repose_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Repose Bind Group"),
+            layout: &repose_bgl,
+            entries: &[
+                bg_entry!(0, &hex_buffer),
+                bg_entry!(1, &delta_buffer),
+                bg_entry!(2, &repose_consts_buf),
+            ],
+        });
+
+        let apply_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Apply Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/apply_deltas.wgsl").into()),
+        });
+
+        let apply_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Apply BGL"),
+            entries: &[
+                buf_rw!(0, false), // hex_data read-write
+                buf_rw!(1, false), // delta buffer read-write
+            ],
+        });
+
+        let apply_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Apply Pipeline Layout"),
+            bind_group_layouts: &[&apply_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let apply_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Apply Pipeline"),
+            layout: Some(&apply_pipeline_layout),
+            module: &apply_shader,
+            entry_point: "main",
+        });
+
+        let apply_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Apply Bind Group"),
+            layout: &apply_bgl,
+            entries: &[
+                bg_entry!(0, &hex_buffer),
+                bg_entry!(1, &delta_buffer),
+            ],
+        });
+
         let min_layout_clone = min_bgl;
         let eros_layout_clone = eros_bgl;
 
@@ -654,6 +750,15 @@ impl GpuSimulation {
             river_bgl,
             river_bind,
             river_params_buf,
+            // --- repose (angle-of-repose) resources ---
+            delta_buffer,
+            repose_pipeline,
+            repose_bgl,
+            repose_bind,
+            repose_consts_buf,
+            apply_pipeline,
+            apply_bgl,
+            apply_bind,
         }
     }
 
@@ -779,6 +884,36 @@ impl GpuSimulation {
 
         // Resize min_elev_buffer (call after initialize_buffer).
         self.resize_min_buffers(width, height);
+
+        // Resize delta buffer
+        let delta_bytes = (width * height * std::mem::size_of::<u32>()) as u64;
+        self.delta_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Delta Buffer"),
+            size: delta_bytes,
+            usage: BU::STORAGE | BU::COPY_SRC | BU::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Recreate repose bind group
+        self.repose_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Repose Bind Group"),
+            layout: &self.repose_bgl,
+            entries: &[
+                bg_entry!(0, &self.hex_buffer),
+                bg_entry!(1, &self.delta_buffer),
+                bg_entry!(2, &self.repose_consts_buf),
+            ],
+        });
+
+        // Recreate apply bind group
+        self.apply_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Apply Bind Group"),
+            layout: &self.apply_bgl,
+            entries: &[
+                bg_entry!(0, &self.hex_buffer),
+                bg_entry!(1, &self.delta_buffer),
+            ],
+        });
     }
 
     pub fn upload_data(&self, data: &[HexGpu]) {
@@ -836,9 +971,9 @@ impl GpuSimulation {
     }
 
     /// Adds uniform rainfall to every cell using a compute shader.
-    pub fn run_rainfall_step(&mut self, rain_per_step: f32, total_cells: usize) {
+    pub fn run_rainfall_step(&mut self, total_cells: usize) {
         // Update constants buffer
-        let constants = [rain_per_step, total_cells as f32];
+        let constants = [total_cells as f32];
         self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&constants));
 
         // Determine dispatch size (workgroup_size = 256)
@@ -1116,6 +1251,33 @@ impl GpuSimulation {
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
+    /// Enforce angle-of-repose by two-pass delta approach.
+    pub fn run_repose_step(&mut self, width: usize, height: usize) {
+        // Write constants for repose_deltas shader: [width,height,HEX_SIZE]
+        let consts = [width as f32, height as f32, HEX_SIZE];
+        self.queue.write_buffer(&self.repose_consts_buf, 0, bytemuck::cast_slice(&consts));
+
+        let total = (width * height) as u32;
+        let groups = (total + 255) / 256;
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("ReposeEncoder")});
+        {
+            // Pass 1: compute deltas with atomics
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("ReposeDeltasPass")});
+            pass.set_pipeline(&self.repose_pipeline);
+            pass.set_bind_group(0, &self.repose_bind, &[]);
+            pass.dispatch_workgroups(groups,1,1);
+        }
+        {
+            // Pass 2: apply deltas
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("ApplyDeltasPass")});
+            pass.set_pipeline(&self.apply_pipeline);
+            pass.set_bind_group(0, &self.apply_bind, &[]);
+            pass.dispatch_workgroups(groups,1,1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
     pub fn download_hex_data(&self) -> Vec<HexGpu> {
         self.download_data()
     }
@@ -1197,7 +1359,7 @@ mod tests {
                 let water = rng.gen_range(0.0..10.0);
                 let load = rng.gen_range(0.0..1.0);
                 cpu_map[y][x]=HexCpu{elevation:elev, water_depth:water, suspended_load:load};
-                gpu_vec.push(HexGpu{elevation:elev, water_depth:water, suspended_load:load, _padding:0.0});
+                gpu_vec.push(HexGpu{elevation:elev, water_depth:water, suspended_load:load, rainfall:0.0});
             }
         }
 
@@ -1259,7 +1421,7 @@ mod tests {
                 let water = rng.gen_range(0.0..10.0);
                 let load = rng.gen_range(0.0..1.0);
                 cpu_map[y][x]=HexCpu{elevation:elev, water_depth:water, suspended_load:load};
-                gpu_vec.push(HexGpu{elevation:elev, water_depth:water, suspended_load:load, _padding:0.0});
+                gpu_vec.push(HexGpu{elevation:elev, water_depth:water, suspended_load:load, rainfall:0.0});
             }
         }
 

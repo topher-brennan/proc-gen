@@ -2,9 +2,12 @@
 // If a cell is much higher than a neighbor, it "loses" elevation, and the neighbor "gains" it.
 // This uses atomics to safely handle multiple neighbors trying to modify the same cell's delta.
 
+// 16-byte stride to match HexGpu
 struct Hex {
-    elevation: f32,
-    // Other fields are not needed for this pass
+    elevation:       f32,
+    _pad1:           f32,
+    _pad2:           f32,
+    _pad3:           f32,
 };
 
 struct Consts {

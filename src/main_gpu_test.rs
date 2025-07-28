@@ -23,7 +23,7 @@ fn main() {
             elevation: i as f32 * 10.0,
             water_depth: 0.0,
             suspended_load: 0.0,
-            _padding: 0.0,
+            rainfall: 0.0,
         });
     }
     
@@ -31,7 +31,7 @@ fn main() {
     gpu_sim.upload_data(&test_data);
     
     // Run one rainfall step using the new GPU compute pass
-    gpu_sim.run_rainfall_step(0.00001, total_cells); // use same scale as CPU RAIN_PER_STEP
+    gpu_sim.run_rainfall_step(total_cells);
     
     // Download results
     let results = gpu_sim.download_data();
@@ -42,4 +42,4 @@ fn main() {
     println!("New water depth at cell 0: {}", results[0].water_depth);
     println!("Original water depth at cell 5: {}", test_data[5].water_depth);
     println!("New water depth at cell 5: {}", results[5].water_depth);
-} 
+}

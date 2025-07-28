@@ -53,10 +53,12 @@ struct Hex {
     elevation: f32, // Feet
     water_depth: f32, // Feet of water currently stored in this hex
     suspended_load: f32, // Feet of sediment stored in water column
+    rainfall: f32, // Feet of rainfall added to this hex per step
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
-    if elevation < SEA_LEVEL {
+    let adjusted_sea_level = SEA_LEVEL - WATER_THRESHOLD;
+    if elevation < adjusted_sea_level {
         let normalized_elevation = (elevation / SEA_LEVEL).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
@@ -70,8 +72,9 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
         }
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
-        let land_height = elevation - SEA_LEVEL;
-        let max_land_height = MAX_ELEVATION - SEA_LEVEL;
+        let land_height = elevation - adjusted_sea_level;
+        // TODO: I expect this is compensating for a math error somewhere else.
+        let max_land_height = (MAX_ELEVATION - adjusted_sea_level) * 256.0 / 255.0;
         let normalized_height = (land_height / max_land_height).min(1.0);
         
         if normalized_height < 0.225 {
@@ -147,39 +150,50 @@ fn simulate_rainfall(
                 elevation: h.elevation,
                 water_depth: h.water_depth,
                 suspended_load: h.suspended_load,
-                _padding: 0.0,
+                rainfall: h.rainfall,
             });
         }
     }
 
     gpu_sim.upload_data(&gpu_data);
 
+    println!(
+        "Calculated constants: KC {}  FLOW_FACTOR {}  BASE_RAINFALL {}  WATER_THRESHOLD {}  WIDTH_HEXAGONS {}  MAX_FLOW {}",
+        KC, FLOW_FACTOR, BASE_RAINFALL, WATER_THRESHOLD, WIDTH_HEXAGONS, MAX_FLOW
+    );
+    println!(
+        "  MAX_ELEVATION {}  SEA_LEVEL {}  ONE_DEGREE_LATITUDE {}  HEX_SIZE {}",
+        MAX_ELEVATION, SEA_LEVEL, ONE_DEGREE_LATITUDE, HEX_SIZE
+    );
+
     for _step in 0..steps {
         // Mass balance stats per step
-        let rainfall_added = (width * height) as f32 * RAIN_PER_STEP;
+        let rainfall_added = (width * height) as f32 * BASE_RAINFALL;
         let mut step_outflow = 0.0f32;
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
 
-        // 1) Add rainfall uniformly – GPU implementation
-        gpu_sim.run_rainfall_step(RAIN_PER_STEP, width * height);
-        // We no longer pull data back to the CPU each step – the GPU holds authoritative state.
+        gpu_sim.run_rainfall_step(width * height);
 
-
-        // GPU water routing --------------------------------------------------
-        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
-        gpu_sim.run_scatter_step(width, height);
-
-        // TODO: For the next two calls, is it possible to get water / sediment flows from GPU for diagnostic purposes?
-        // Ocean boundary condition on GPU – fast version (no CPU read-back)
-        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
-        // GPU river source updater --------------------------------------------
+        // TODO: Possible to get water / sediment inflow from GPU for diagnostic purposes?
         let source_idx = (river_y * width + (width - 1)) as u32;
         gpu_sim.run_river_source_update(source_idx);
 
-        // --- GPU min-slope + erosion/deposition passes ---
+        // GPU water routing
+        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
+        gpu_sim.run_scatter_step(width, height);
+
+        // TODO: Similar to the river source updater, is it possible to get water / sediment outflows
+        // from GPU for diagnostic purposes?
+        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
+
+        // GPU min-slope + erosion/deposition passes
         gpu_sim.run_min_neigh_step(width, height);
         gpu_sim.run_erosion_step(width, height);
+
+        // TODO: This is doing something extremely strange. Either it's not matching the original logic,
+        // or it's interacting strangely with the modified slope calculation.
+        gpu_sim.run_repose_step(width, height);
 
         if _step % (WIDTH_HEXAGONS as u32 * 25) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
@@ -233,9 +247,9 @@ fn simulate_rainfall(
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
-            // TODO: This indicates sources never gets eroded, need to fix that.
             let source_hex = &hex_map[river_y][WIDTH_HEXAGONS as usize - 1];
 
+            // TODO: Pull this into its own function.
             // --- Compute river path average water depth ---
             let mut cx = WIDTH_HEXAGONS as usize - 1;
             let mut cy = river_y;
@@ -287,6 +301,22 @@ fn simulate_rainfall(
 
             let round = _step / (WIDTH_HEXAGONS as u32);
 
+            let (min_elevation, max_elevation) = hex_map.par_iter().map(|row| {
+                let mut row_min = f32::INFINITY;
+                let mut row_max = f32::NEG_INFINITY;
+                for h in row {
+                    if h.elevation < row_min {
+                        row_min = h.elevation;
+                    }
+                    if h.elevation > row_max {
+                        row_max = h.elevation;
+                    }
+                }
+                (row_min, row_max)
+            }).reduce(|| (f32::INFINITY, f32::NEG_INFINITY), |acc, val| {
+                (acc.0.min(val.0), acc.1.max(val.1))
+            });
+
             println!(
                 "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  river avg depth {:.2} ft",
                 round,
@@ -299,6 +329,8 @@ fn simulate_rainfall(
                 source_hex.elevation,
                 river_avg_depth,
             );
+
+            println!("  min elevation: {:.2} ft  max elevation: {:.2} ft", min_elevation, max_elevation);
 
             let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
             render_frame(hex_map, &mut frame_buffer, river_y);
@@ -418,15 +450,31 @@ fn main() {
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         for x in 0..WIDTH_HEXAGONS {
+            // TODO: would be good if ~577 hexes from the coast and at about 1587 hexes from the top of the map,
+            // elevation above sea level was increased by ~17%. That's a total elevation increase of ~8.5%. 
+
+            // TODO: put a "volcano" (very symmetrical mountain) in the river's path. Maybe 3 miles high with 45
+            // degree angle sides? Somewhere in the lower 80% of the river valley.
+
+            // TODO: A ring of hexes, in a 5-hex radius, that get a 80-120 foot elevation increase. Somewhere at middle latitudes.
             let mut southern_multiplier = 1.0;
+            let mut rainfall = BASE_RAINFALL;
+            let mut southernness = 0.0;
+
             let southern_threshold = (river_y + 276) as u16;
             if y > southern_threshold {
-                southern_multiplier += 0.5 * ((y - southern_threshold) as f32 / 1518.0).max(0.0);
+                southernness = (y - southern_threshold) as f32 / (2160.0 - southern_threshold as f32);
+                southern_multiplier += 0.25 * (southernness * southernness * (3.0 - 2.0 * southernness)).max(0.0);
+                rainfall *= (1.0 + 39.0 * southernness.max(0.0));
             }
 
-            let x_based_elevation = (x as f32) * 4.0 * southern_multiplier;
+            let mut coord_based_elevation = (x as f32) * 4.0 * southern_multiplier;
+            // Absurd plateau at southern edge of really big maps.
+            if coord_based_elevation > SEA_LEVEL && coord_based_elevation < SEA_LEVEL + 6480.0 && y > 1656 && y < 1656 + 276 {
+                coord_based_elevation = MAX_ELEVATION - HEX_SIZE * 0.01;
+            }
 
-            let mut elevation = x_based_elevation;
+            let mut elevation = coord_based_elevation;
             if y == 0 || y == HEIGHT_PIXELS - 1 || x == WIDTH_HEXAGONS - 1 {
                 // Try to prevent weird artifacts at the edges of the map. Not applied to western edge because
                 // we have the outflow mechanic there.
@@ -441,7 +489,7 @@ fn main() {
             // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
             // starting with zero water, I could probably do something fancier with pathfinding to guarantee
             // hexes start with water IFF they have a path to the sea.
-            if x_based_elevation + HEX_SIZE / 100.0 < SEA_LEVEL {
+            if coord_based_elevation + HEX_SIZE / 100.0 < SEA_LEVEL {
                 water_depth = SEA_LEVEL - elevation;
             }
             hex_map[y as usize].push(Hex {
@@ -449,6 +497,7 @@ fn main() {
                 elevation,
                 water_depth,
                 suspended_load: 0.0,
+                rainfall,
             });
         }
     }
