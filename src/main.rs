@@ -181,7 +181,7 @@ fn simulate_rainfall(
         gpu_sim.run_min_neigh_step(width, height);
         gpu_sim.run_erosion_step(width, height);
 
-        if _step % (WIDTH_HEXAGONS as u32 * 20) == (WIDTH_HEXAGONS as u32) - 1 {
+        if _step % (WIDTH_HEXAGONS as u32 * 25) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {

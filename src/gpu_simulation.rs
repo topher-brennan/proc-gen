@@ -137,12 +137,21 @@ impl GpuSimulation {
             .await
             .expect("Failed to find an appropriate adapter");
 
+        // Increase limits to allow large storage buffers (>128 MiB)
+        let mut limits = wgpu::Limits::default();
+        // 512 MiB should comfortably cover very large maps while still
+        // being supported on most desktop GPUs. The request will be
+        // clamped to the adapter’s true limit automatically.
+        limits.max_storage_buffer_binding_size = 512 * 1024 * 1024;
+        // Keep max_buffer_size in sync so creation also succeeds.
+        limits.max_buffer_size = 512 * 1024 * 1024;
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    limits,
                 },
                 None,
             )

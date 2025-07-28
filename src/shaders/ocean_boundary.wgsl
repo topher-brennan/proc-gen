@@ -53,7 +53,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var sediment_out: f32 = 0.0;
     if (cell.water_depth > target_depth) {
         water_out = cell.water_depth - target_depth;
-        sediment_out = cell.suspended_load;
+        sediment_out = cell.suspended_load * water_out / cell.water_depth;
     }
 
     // Write outflow amounts
@@ -62,7 +62,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Apply ocean boundary
     cell.water_depth = target_depth;
-    cell.suspended_load = 0.0;
+    cell.suspended_load = cell.suspended_load - sediment_out;
 
     hex_data[index] = cell;
 } 
