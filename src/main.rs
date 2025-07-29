@@ -454,7 +454,8 @@ fn main() {
             }
 
             let mut coord_based_elevation = (x as f32) * 4.0 * southern_multiplier;
-            // Absurd plateau at southern edge of really big maps.
+            // Absurd plateau at southern edge of really big maps. Might make it a bit narrower, like 240 hexes?
+            // Also might extend it into the sea?
             if coord_based_elevation > SEA_LEVEL && coord_based_elevation < SEA_LEVEL + 6480.0 && y > 1656 && y < 1656 + 276 {
                 coord_based_elevation = MAX_ELEVATION - HEX_SIZE * 0.01;
             }
