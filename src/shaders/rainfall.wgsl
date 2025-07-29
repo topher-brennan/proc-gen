@@ -13,6 +13,7 @@ var<uniform> constants: Constants;
 
 struct Constants {
     hex_count: f32,
+    sea_level: f32,
 }
 
 @compute @workgroup_size(256)
@@ -22,6 +23,8 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // Add per-cell rainfall value to water depth
-    hex_data[index].water_depth += hex_data[index].rainfall;
+    // Only add rainfall to land (elevation >= sea_level)
+    if (hex_data[index].elevation >= constants.sea_level) {
+        hex_data[index].water_depth += hex_data[index].rainfall;
+    }
 } 

@@ -378,7 +378,7 @@ impl GpuSimulation {
         // Constants buffer (rain_per_step, hex_count) – rainfall shader
         let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Constants Buffer"),
-            size: std::mem::size_of::<[f32; 4]>() as u64,
+            size: std::mem::size_of::<[f32; 2]>() as u64, // Changed from [f32; 1] to [f32; 2]
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -972,8 +972,8 @@ impl GpuSimulation {
 
     /// Adds uniform rainfall to every cell using a compute shader.
     pub fn run_rainfall_step(&mut self, total_cells: usize) {
-        // Update constants buffer
-        let constants = [total_cells as f32];
+        // Update constants buffer with hex_count and sea_level
+        let constants = [total_cells as f32, SEA_LEVEL];
         self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&constants));
 
         // Determine dispatch size (workgroup_size = 256)
