@@ -129,6 +129,8 @@ fn simulate_rainfall(
     steps: u32,
     river_y: usize,
 ) {
+    let water_start = Instant::now();
+
     let height = HEIGHT_PIXELS as usize;
     let width = WIDTH_HEXAGONS as usize;
 
@@ -172,28 +174,6 @@ fn simulate_rainfall(
         let mut step_outflow = 0.0f32;
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
-
-        gpu_sim.run_rainfall_step(width * height);
-
-        // TODO: Possible to get water / sediment inflow from GPU for diagnostic purposes?
-        let source_idx = (river_y * width + (width - 1)) as u32;
-        gpu_sim.run_river_source_update(source_idx);
-
-        // GPU water routing
-        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
-        gpu_sim.run_scatter_step(width, height);
-
-        // TODO: Similar to the river source updater, is it possible to get water / sediment outflows
-        // from GPU for diagnostic purposes?
-        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
-
-        // GPU min-slope + erosion/deposition passes
-        gpu_sim.run_min_neigh_step(width, height);
-        gpu_sim.run_erosion_step(width, height);
-
-        // TODO: This is doing something extremely strange. Either it's not matching the original logic,
-        // or it's interacting strangely with the modified slope calculation.
-        gpu_sim.run_repose_step(width, height);
 
         if _step % (WIDTH_HEXAGONS as u32 * 25) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
@@ -275,7 +255,7 @@ fn simulate_rainfall(
                 }
 
                 let offsets = if (cx & 1) == 0 { &NEIGH_OFFSETS_EVEN } else { &NEIGH_OFFSETS_ODD };
-                let mut min_elev = cell.elevation;
+                let mut min_elev = cell.elevation + cell.water_depth;
                 let mut next = None;
                 for &(dx, dy) in offsets {
                     let nx_i = cx as i32 + dx as i32;
@@ -284,8 +264,8 @@ fn simulate_rainfall(
                         continue;
                     }
                     let ncell = &hex_map[ny_i as usize][nx_i as usize];
-                    if ncell.elevation < min_elev {
-                        min_elev = ncell.elevation;
+                    if ncell.elevation + ncell.water_depth < min_elev {
+                        min_elev = ncell.elevation + ncell.water_depth;
                         next = Some((nx_i as usize, ny_i as usize));
                     }
                 }
@@ -318,7 +298,7 @@ fn simulate_rainfall(
             });
 
             println!(
-                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  river avg depth {:.2} ft",
+                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
                 water_on_land,
@@ -326,17 +306,35 @@ fn simulate_rainfall(
                 max_depth,
                 wet_cells,
                 wet_cells_percentage,
-                source_hex.elevation,
-                river_avg_depth,
             );
-
-            println!("  min elevation: {:.2} ft  max elevation: {:.2} ft", min_elevation, max_elevation);
+            println!("  source elevation {:.2} ft  river_length {}  river avg depth {:.2} ft", source_hex.elevation, river_count, river_avg_depth);
+            println!("  min elevation: {:.2} ft  max elevation: {:.2} ft  time: {:?}", min_elevation, max_elevation, water_start.elapsed());
 
             let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
             render_frame(hex_map, &mut frame_buffer, river_y);
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             save_png("terrain.png", hex_map);
         }
+
+        gpu_sim.run_rainfall_step(width * height);
+
+        // TODO: Possible to get water / sediment inflow from GPU for diagnostic purposes?
+        let source_idx = (river_y * width + (width - 1)) as u32;
+        gpu_sim.run_river_source_update(source_idx);
+
+        // GPU water routing
+        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
+        gpu_sim.run_scatter_step(width, height);
+
+        // TODO: Similar to the river source updater, is it possible to get water / sediment outflows
+        // from GPU for diagnostic purposes?
+        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
+
+        // GPU min-slope + erosion/deposition passes
+        gpu_sim.run_min_neigh_step(width, height);
+        gpu_sim.run_erosion_step(width, height);
+
+        gpu_sim.run_repose_step(width, height);
     }
 
     let water_remaining: f32 = hex_map
@@ -349,16 +347,6 @@ fn simulate_rainfall(
         "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
         steps, total_outflow, water_remaining, total_sediment_in, total_sediment_out
     );
-}
-
-// --- Helper: apply river inflow at east edge ---
-fn apply_river_inflow(river_y: usize, gpu_sim: &mut GpuSimulation
-) {
-    let suspended_load_per_step = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
-
-    let idx = river_y*(WIDTH_HEXAGONS as usize) + (WIDTH_HEXAGONS as usize) - 1;
-    gpu_sim.add_water(idx, RIVER_WATER_PER_STEP);
-    gpu_sim.add_load(idx, suspended_load_per_step);
 }
 
 fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
@@ -450,9 +438,6 @@ fn main() {
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         for x in 0..WIDTH_HEXAGONS {
-            // TODO: would be good if ~577 hexes from the coast and at about 1587 hexes from the top of the map,
-            // elevation above sea level was increased by ~17%. That's a total elevation increase of ~8.5%. 
-
             // TODO: put a "volcano" (very symmetrical mountain) in the river's path. Maybe 3 miles high with 45
             // degree angle sides? Somewhere in the lower 80% of the river valley.
 
@@ -486,10 +471,8 @@ fn main() {
             ensure_finite!(elevation, "elevation", x, y, -1);
 
             let mut water_depth = 0.0;
-            // This allows for the possibility of pockets of dry land below sea level. It errs on the side of
-            // starting with zero water, I could probably do something fancier with pathfinding to guarantee
-            // hexes start with water IFF they have a path to the sea.
-            if coord_based_elevation + HEX_SIZE / 100.0 < SEA_LEVEL {
+            // Initially there will be no dry land below sea level.
+            if elevation < SEA_LEVEL {
                 water_depth = SEA_LEVEL - elevation;
             }
             hex_map[y as usize].push(Hex {
@@ -564,30 +547,4 @@ fn main() {
     let save_duration = png_start.elapsed();
     println!("Image rendering and saving took: {:?}", save_duration);
     println!("Terrain visualization saved as terrain.png");
-}
-
-#[cfg(test)]
-mod river_tests {
-    use super::*;
-    #[test]
-    fn river_inflow_correct() {
-        let width = WIDTH_HEXAGONS as usize;
-        let height = 3usize;
-        let river_y = 1usize;
-        let mut hex_map: Vec<Vec<Hex>> = (0..height).map(|y| {
-            (0..width).map(|x| Hex{coordinate:(x as u16,y as u16), elevation:0.0, water_depth:0.0, suspended_load:0.0}).collect()
-        }).collect();
-        let mut next_water: Vec<Vec<f32>> = (0..height).map(|_| vec![0.0; width]).collect();
-        let mut next_load: Vec<Vec<f32>>  = (0..height).map(|_| vec![0.0; width]).collect();
-
-        apply_river_inflow(river_y, &mut hex_map, &mut next_water, &mut next_load, &mut gpu_sim);
-        let rx = width-1;
-        assert!((hex_map[river_y][rx].water_depth - RIVER_WATER_PER_STEP).abs() < 1e-6);
-        assert!((next_water[river_y][rx] - RIVER_WATER_PER_STEP).abs() < 1e-6);
-        let expected_load = RIVER_WATER_PER_STEP * RIVER_LOAD_FACTOR * KC / HEX_SIZE;
-        assert!((hex_map[river_y][rx].suspended_load - expected_load).abs() < 1e-6);
-        assert!((next_load[river_y][rx] - expected_load).abs() < 1e-6);
-        // ensure neighbouring cell unchanged
-        assert_eq!(hex_map[river_y][rx-1].water_depth, 0.0);
-    }
 }
