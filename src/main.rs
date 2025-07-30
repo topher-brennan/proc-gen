@@ -489,23 +489,22 @@ fn main() {
                 }
             }
 
-            // While these look like likely culprits for out-of-control errosion, commenting out this code does not fix it.
-            if x >= TOTAL_SEA_WIDTH && x < TOTAL_SEA_WIDTH + SW_RANGE_WIDTH {
-                let distance_from_sw_range = (y as i16 - (NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT) as i16).abs();
-                if distance_from_sw_range < SW_RANGE_FRINGE as i16 {
-                    let range_elevation = SEA_LEVEL + SW_RANGE_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
-                    elevation = range_elevation.max(elevation);
-                } else {
-                    elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
-                }
-            } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_PLATEAU_FRINGE && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE {
-                elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
-                // Hex is in the fringe area, where we want our river to be.
-                if y == RIVER_Y && x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
-                    elevation -= RANDOM_ELEVATION_FACTOR * 2.0;
-                }
-            } else {
-                elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
+            elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
+
+            // Special features:
+            if x == BIG_VOLCANO_X && y == RIVER_Y {
+                elevation += BIG_VOLCANO_INITIAL_ELEVATION;
+            } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_PLATEAU_FRINGE && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE && y != RIVER_Y {
+                elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
+            } else if x > TOTAL_SEA_WIDTH && y > NE_PLATEAU_HEIGHT && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE {
+                let ridge_elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
+                let factor = (x - TOTAL_SEA_WIDTH) as f32 / (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32;
+                elevation = ridge_elevation * factor + elevation * (1.0 - factor);
+            } else if x >= TOTAL_SEA_WIDTH && y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE {
+                let range_elevation = SEA_LEVEL + SW_RANGE_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
+                let x_factor = 1.0 - (x - TOTAL_SEA_WIDTH) as f32 / (WIDTH_HEXAGONS - TOTAL_SEA_WIDTH) as f32;
+                let y_factor = 1.0 - f32::clamp((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE) as f32 / SOUTH_MOUNTAINS_HEIGHT as f32, 0.0, 1.0);
+                elevation = range_elevation * (x_factor * y_factor) + elevation * (1.0 - x_factor * y_factor);
             }
 
             let mut water_depth = 0.0;
@@ -526,7 +525,9 @@ fn main() {
             }
             if y <= NE_PLATEAU_HEIGHT && x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                 rain_class = 4;
-                // elevation -= RANDOM_ELEVATION_FACTOR;
+                if y != RIVER_Y {
+                    elevation -= HEX_SIZE;
+                }
             }
 
             // Case switch statement to set rainfall based on rain_class:

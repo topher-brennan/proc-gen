@@ -20,8 +20,8 @@ pub const MEDIUM_RAIN: f32 = 21.0;
 pub const HIGH_RAIN: f32 = 34.0;
 // Used for NE plateau.
 pub const VERY_HIGH_RAIN: f32 = 49.0;
-// Above numbers are in inches, this can be adjusted to e.g. feet per year.
-pub const RAINFALL_FACTOR: f32 = 1.0 / 12.0 / 365.0 / 24.0 / 60.0;
+// Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
+pub const RAINFALL_FACTOR: f32 = 1.0 / 12.0 / 365.0 / 24.0 / 6.0;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
@@ -63,13 +63,14 @@ pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / TOTAL_LAND_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
 pub const SW_RANGE_FRINGE: usize = 4;
+pub const SW_RANGE_HEIGHT: usize = 80;
 pub const SW_RANGE_WIDTH: usize = (1080.0 / HEX_FACTOR) as usize;
 // Unlike most other features, the SW range will be centered on the border between the central highland and the south mountains,
 // with only a small fringe on either side.
 
-pub const KC: f32 = 0.01; // capacity coefficient
-pub const KE: f32 = 0.01; // erosion rate fraction
-pub const KD: f32 = 0.01; // deposition rate fraction
+pub const KC: f32 = 1.0; // capacity coefficient
+pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
+pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
 
 // TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE plateau.
 // 0.01 hours of average flow through the Aswan Dam.
@@ -89,3 +90,6 @@ pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
 pub const LOG_ROUNDS: u32 = 1;
+
+pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
+pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (500.0 / HEX_FACTOR) as usize;
