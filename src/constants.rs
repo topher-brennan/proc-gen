@@ -63,7 +63,7 @@ pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / TOTAL_LAND_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
 pub const SW_RANGE_FRINGE: usize = 4;
-pub const SW_RANGE_HEIGHT: usize = 80;
+pub const SW_RANGE_HEIGHT: usize = 120;
 pub const SW_RANGE_WIDTH: usize = (1080.0 / HEX_FACTOR) as usize;
 // Unlike most other features, the SW range will be centered on the border between the central highland and the south mountains,
 // with only a small fringe on either side.
@@ -89,7 +89,13 @@ pub const MAX_SLOPE: f32 = 1.00;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
-pub const LOG_ROUNDS: u32 = 1;
+pub const LOG_ROUNDS: u32 = 25;
 
 pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
-pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (500.0 / HEX_FACTOR) as usize;
+pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
+
+pub const ISLAND_CHAIN_X: usize = WIDTH_HEXAGONS - NE_PLATEAU_WIDTH - MAIN_RIVER_WIDTH - (1_200.0 / HEX_FACTOR) as usize;
+pub const FIRST_ISLAND_Y: usize = (12.75 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
+pub const FIRST_ISLAND_MAX_ELEVATION: f32 = 11_014.0;
+pub const SECOND_ISLAND_Y: usize = (9.56 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
+pub const SECOND_ISLAND_MAX_ELEVATION: f32 = 8_058.0;

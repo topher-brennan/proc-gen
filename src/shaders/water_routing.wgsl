@@ -76,9 +76,9 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let y = i32(index / width);
     
     let hex = hex_data[index];
-    let w = hex.water_depth;
+    let f = total_fluid(hex);
     
-    if (w <= 0.0) {
+    if (f <= 0.0) {
         next_water[index] = 0.0;
         next_load[index] = 0.0;
         tgt_buffer[index]  = NO_TARGET;
@@ -86,7 +86,7 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     // Find lowest neighbor (variables must be mutable, use 'var')
-    var min_height: f32 = hex.elevation + w;
+    var min_height: f32 = height(hex);
     var target_x: i32 = x;
     var target_y: i32 = y;
     
@@ -120,7 +120,7 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (is_valid_coord(nx, ny)) {
             let n_index = get_hex_index(nx, ny);
             let n_hex = hex_data[n_index];
-            let nh = n_hex.elevation + n_hex.water_depth;
+            let nh = height(n_hex);
             
             if (nh < min_height) {
                 min_height = nh;
@@ -134,12 +134,12 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (target_x != x || target_y != y) {
         let target_index = get_hex_index(target_x, target_y);
         let target_hex = hex_data[target_index];
-        let diff = hex.elevation + w - (target_hex.elevation + target_hex.water_depth);
-        let move_w = min(select(diff * constants.flow_factor, w, diff > w), constants.max_flow);
+        let diff = height(hex) - height(target_hex);
+        let move_f = min(select(diff * constants.flow_factor, f, diff > f), constants.max_flow);
         
-        if (move_w > 0.0) {
-            next_water[index] = move_w;
-            next_load[index] = hex.suspended_load * move_w / w;
+        if (move_f > 0.0) {
+            next_water[index] = (1.0 - sediment_fraction(hex)) * move_f;
+            next_load[index] = sediment_fraction(hex) * move_f;
             tgt_buffer[index]  = target_index;
         } else {
             next_water[index] = 0.0;

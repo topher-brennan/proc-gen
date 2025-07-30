@@ -4,8 +4,8 @@
 struct Hex {
     elevation: f32,
     water_depth: f32,
-    _pad1: f32,
-    _pad2: f32,
+    suspended_load: f32,
+    _pad: f32,
 };
 
 @group(0) @binding(0)
@@ -47,7 +47,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
     let x = i32(index % u32(C.width));
     let y = i32(index / u32(C.width));
 
-    var m = hex_data[index].elevation + hex_data[index].water_depth;
+    var m = height(hex_data[index]);
     let even = (x & 1) == 0;
 
     for (var k:u32 = 0u; k < 6u; k = k + 1u) {
@@ -76,7 +76,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         let nx = x + off.x;
         let ny = y + off.y;
         if (!inside(nx, ny)) { continue; }
-        let elev = hex_data[idx(nx, ny)].elevation + hex_data[idx(nx, ny)].water_depth;
+        let elev = height(hex_data[idx(nx, ny)]);
         if (elev < m) { m = elev; }
     }
 

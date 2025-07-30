@@ -263,7 +263,7 @@ impl GpuSimulation {
 
         let routing_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Water Routing Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shaders/water_routing.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/water_routing.wgsl")))),
         });
 
         let routing_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -343,7 +343,7 @@ impl GpuSimulation {
         // ---------------- Scatter pipeline ---------------------------
         let scatter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Scatter Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shaders/scatter_water.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/scatter_water.wgsl")))),
         });
 
         let scatter_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
@@ -475,7 +475,7 @@ impl GpuSimulation {
         // ---- min_neigh pipeline ----
         let min_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor{
             label:Some("min shader"),
-            source:wgpu::ShaderSource::Wgsl(include_str!("shaders/min_neigh.wgsl").into())
+            source:wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/min_neigh.wgsl")).into())
         });
         let min_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
             label:Some("min BGL"),
@@ -500,7 +500,7 @@ impl GpuSimulation {
         // ---- erosion pipeline ----
         let eros_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor{
             label:Some("erosion shader"),
-            source:wgpu::ShaderSource::Wgsl(include_str!("shaders/erosion.wgsl").into())
+            source:wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/erosion.wgsl")).into())
         });
         let eros_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
             label:Some("erosion BGL"),
@@ -525,7 +525,7 @@ impl GpuSimulation {
         // ---- ocean boundary pipeline ----
         let ocean_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ocean Boundary Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ocean_boundary.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/ocean_boundary.wgsl")).into()),
         });
 
         let ocean_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

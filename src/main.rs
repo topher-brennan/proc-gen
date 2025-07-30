@@ -180,11 +180,68 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
     }
 }
 
-// TODO: Vary rainfall so that there's more rainfall further south, and more rainfall closer to the coast.
-// TODO: Visualize results.
-// ------------------------------------------------------------
-// Simple rainfall–runoff experiment (Milestone 1)
-// ------------------------------------------------------------
+fn upload_hex_data(hex_map: &Vec<Vec<Hex>>, gpu_sim: &GpuSimulation) {
+    let height = HEIGHT_PIXELS as usize;
+    let width = WIDTH_PIXELS as usize;
+    let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
+    for row in hex_map.iter() {
+        for h in row {
+            gpu_data.push(HexGpu {
+                elevation: h.elevation,
+                water_depth: h.water_depth,
+                suspended_load: h.suspended_load,
+                rainfall: h.rainfall,
+            });
+        }
+    }
+    gpu_sim.upload_data(&gpu_data);
+}
+
+fn download_hex_data(gpu_sim: &GpuSimulation, hex_map: &mut Vec<Vec<Hex>>) {
+    let height = HEIGHT_PIXELS as usize;
+    let width = WIDTH_HEXAGONS as usize;
+    let gpu_hex_data = gpu_sim.download_hex_data();
+    for (idx, h) in gpu_hex_data.iter().enumerate() {
+        let y = idx / width;
+        let x = idx % width;
+        let cell = &mut hex_map[y][x];
+        cell.elevation = h.elevation;
+        cell.water_depth = h.water_depth;
+        cell.suspended_load = h.suspended_load;
+    }
+}
+
+fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
+    let height = HEIGHT_PIXELS as usize;
+    let width = WIDTH_HEXAGONS as usize;
+
+    let mut gpu_sim = pollster::block_on(GpuSimulation::new());
+    gpu_sim.initialize_buffer(width, height);
+    gpu_sim.resize_min_buffers(width, height);
+
+    upload_hex_data(hex_map, &gpu_sim);
+
+    for _ in 0..100 {
+        gpu_sim.run_repose_step(width, height);
+    }
+
+    download_hex_data(&gpu_sim, hex_map);
+}
+
+fn fill_sea(hex_map: &mut Vec<Vec<Hex>>) {
+    let height = HEIGHT_PIXELS as usize;
+    let width = WIDTH_HEXAGONS as usize;
+
+    for y in 0..height {
+        for x in 0..width {
+            let cell = &mut hex_map[y][x];
+            if cell.elevation < SEA_LEVEL {
+                cell.water_depth = SEA_LEVEL - cell.elevation;
+            }
+        }
+    }
+}
+
 fn simulate_rainfall(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
@@ -206,19 +263,7 @@ fn simulate_rainfall(
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
 
-    let mut gpu_data: Vec<HexGpu> = Vec::with_capacity(width * height);
-    for row in hex_map.iter() {
-        for h in row {
-            gpu_data.push(HexGpu {
-                elevation: h.elevation,
-                water_depth: h.water_depth,
-                suspended_load: h.suspended_load,
-                rainfall: h.rainfall,
-            });
-        }
-    }
-
-    gpu_sim.upload_data(&gpu_data);
+    upload_hex_data(hex_map, &gpu_sim);
 
     println!(
         "Calculated constants: NORTH_DESERT_WIDTH {}  NE_PLATEAU_WIDTH {}  TOTAL_LAND_WIDTH {}  TOTAL_SEA_WIDTH {}  SW_RANGE_WIDTH {}",
@@ -353,15 +398,7 @@ fn simulate_rainfall(
         gpu_sim.run_repose_step(width, height);
     }
 
-    let gpu_hex_data = gpu_sim.download_hex_data();
-    for (idx, h) in gpu_hex_data.iter().enumerate() {
-        let y = idx / width;
-        let x = idx % width;
-        let cell = &mut hex_map[y][x];
-        cell.elevation = h.elevation;
-        cell.water_depth = h.water_depth;
-        cell.suspended_load = h.suspended_load;
-    }
+    download_hex_data(&gpu_sim, hex_map);
 
     let water_remaining: f32 = hex_map
         .iter()
@@ -448,6 +485,18 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32]) {
     }
 }
 
+fn get_erruption_elevation(target_elevation: f32) -> f32 {
+    let mut erruption_elevation = target_elevation;
+    let mut current_target_elevation = target_elevation - HEX_SIZE;
+    let mut ring = 1.0;
+    while current_target_elevation > 0.0 {
+        erruption_elevation += ring * 6.0 * current_target_elevation;
+        current_target_elevation -= HEX_SIZE;
+        ring += 1.0;
+    }
+    erruption_elevation
+}
+
 fn main() {
     // Allow user to override number of rounds via command-line: first positional arg is rounds, e.g. `cargo run --release -- 2000`
     let rounds: u32 = std::env::args()
@@ -464,10 +513,6 @@ fn main() {
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         for x in 0..WIDTH_HEXAGONS {
-            // TODO: put a "volcano" (very symmetrical mountain) in the river's path. Maybe 3 miles high with 45
-            // degree angle sides? Somewhere in the lower 80% of the river valley.
-
-            // TODO: A ring of hexes, in a 5-hex radius, that get a 80-120 foot elevation increase. Somewhere at middle latitudes.
             let mut elevation = 0.0;
             let mut distance_from_coast = 0;
 
@@ -491,27 +536,41 @@ fn main() {
 
             elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
 
+            // TODO: More realistic seafloor depth, and fix islands.
+            // TODO: A ring of hexes, in a 5-hex radius, that get a 80-120 foot elevation increase. Somewhere at middle latitudes.
             // Special features:
             if x == BIG_VOLCANO_X && y == RIVER_Y {
-                elevation += BIG_VOLCANO_INITIAL_ELEVATION;
+                // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
+                // usually into a cone.
+                elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_PLATEAU_FRINGE && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE && y != RIVER_Y {
+                // The northeast plateau.
                 elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
             } else if x > TOTAL_SEA_WIDTH && y > NE_PLATEAU_HEIGHT && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE {
+                // Ridge separating north desert from central highlands.
                 let ridge_elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
                 let factor = (x - TOTAL_SEA_WIDTH) as f32 / (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32;
                 elevation = ridge_elevation * factor + elevation * (1.0 - factor);
             } else if x >= TOTAL_SEA_WIDTH && y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE {
+                // A range on the northern edge of the southern mountains, tallest in the west.
                 let range_elevation = SEA_LEVEL + SW_RANGE_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
                 let x_factor = 1.0 - (x - TOTAL_SEA_WIDTH) as f32 / (WIDTH_HEXAGONS - TOTAL_SEA_WIDTH) as f32;
-                let y_factor = 1.0 - f32::clamp((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE) as f32 / SOUTH_MOUNTAINS_HEIGHT as f32, 0.0, 1.0);
+                let y_factor = 1.0 - f32::clamp((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE) as f32 / SW_RANGE_HEIGHT as f32, 0.0, 1.0);
                 elevation = range_elevation * (x_factor * y_factor) + elevation * (1.0 - x_factor * y_factor);
+            } else if x == ISLAND_CHAIN_X {
+                // Need to figure out how to do this without causing out-of-control erosion of the sea floor.
+                // if y == FIRST_ISLAND_Y {
+                //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + FIRST_ISLAND_MAX_ELEVATION);
+                // } else if y == SECOND_ISLAND_Y {
+                //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + SECOND_ISLAND_MAX_ELEVATION);
+                // }
             }
 
-            let mut water_depth = 0.0;
-            // Initially there will be no dry land below sea level.
-            if elevation < SEA_LEVEL {
-                water_depth = SEA_LEVEL - elevation;
-            }
+            // let mut water_depth = 0.0;
+            // // Initially there will be no dry land below sea level.
+            // if elevation < SEA_LEVEL {
+            //     water_depth = SEA_LEVEL - elevation;
+            // }
 
             let mut rain_class = 0;
             if distance_from_coast < COAST_WIDTH {
@@ -544,16 +603,15 @@ fn main() {
             hex_map[y as usize].push(Hex {
                 coordinate: (x, y),
                 elevation,
-                water_depth,
+                water_depth: 0.0,
                 suspended_load: 0.0,
                 rainfall: rainfall * RAINFALL_FACTOR,
             });
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Prefill ALL closed basins using a Priority-Flood (O(n log n)) pass.
-    // ---------------------------------------------------------------------
+    let_slopes_settle(&mut hex_map);
+    fill_sea(&mut hex_map);
     prefill_basins(&mut hex_map);
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
