@@ -120,21 +120,21 @@ struct Hex {
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
     let adjusted_sea_level = SEA_LEVEL - WATER_THRESHOLD;
     if elevation < adjusted_sea_level {
-        let normalized_elevation = (elevation / SEA_LEVEL).min(1.0);
+        let normalized_elevation = 1.0 - ((adjusted_sea_level - elevation) / ABYSSAL_PLAINS_DEPTH).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
         } else {
-            // Purple to light blue
-            let red = 128;
+            // Blue to light blue
+            let red = 0;
             let green = (255.0 * normalized_elevation) as u8;
-            let blue = (128.0 + (127.0 * normalized_elevation)) as u8;
+            let blue = 255;
             Rgb([red, green, blue])
         }
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
         let land_height = elevation - adjusted_sea_level;
-        // TODO: I expect this is compensating for a math error somewhere else.
+        // TODO: I expect the 256.0 / 255.0 is compensating for a math error somewhere else.
         let max_land_height = (MAX_ELEVATION - adjusted_sea_level) * 256.0 / 255.0;
         let normalized_height = (land_height / max_land_height).min(1.0);
         
@@ -516,10 +516,12 @@ fn main() {
             let mut elevation = 0.0;
             let mut distance_from_coast = 0;
 
-            if x < CONTINENTAL_SLOPE_WIDTH {
-                elevation = CONTINENTAL_SLOPE_INCREMENT * x as f32;
+            if x < ABYSSAL_PLAINS_WIDTH {
+                elevation = SEA_LEVEL - ABYSSAL_PLAINS_DEPTH;
+            } else if x >= ABYSSAL_PLAINS_WIDTH && x < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
+                elevation = CONTINENTAL_SLOPE_INCREMENT * (x - ABYSSAL_PLAINS_WIDTH) as f32 - ABYSSAL_PLAINS_DEPTH;
             } else if x < TOTAL_SEA_WIDTH {
-                elevation = (SEA_LEVEL - CONTINENTAL_SHELF_DEPTH + CONTINENTAL_SLOPE_INCREMENT * (x - CONTINENTAL_SLOPE_WIDTH) as f32);
+                elevation = (x - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
             } else {
                 distance_from_coast = x - TOTAL_SEA_WIDTH;
 
