@@ -115,6 +115,22 @@ struct Hex {
     water_depth: f32, // Feet of water currently stored in this hex
     suspended_load: f32, // Feet of sediment stored in water column
     rainfall: f32, // Feet of rainfall added to this hex per step
+    // TODO: an original_land flag would be useful for logging.
+}
+
+// This can be done more cleanly with floor division, but the
+// docs describe div_floor as part of an experimental API.
+fn hex_distance(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    let dx = (x1 - x2).abs();
+    if dx % 2 == 0 {
+        let diagonal_only_y_min = y1 - dx / 2;
+        let diagonal_only_y_max = y1 + dx / 2;
+        return dx + 0.max(diagonal_only_y_min - y2).max(y2 - diagonal_only_y_max);
+    } else {
+        let diagonal_only_y_min = y1 - (dx - x1 % 2) / 2;
+        let diagonal_only_y_max = y1 + (dx + x1 % 2) / 2;
+        return dx + 0.max(diagonal_only_y_min - y2).max(y2 - diagonal_only_y_max);
+    }
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
@@ -221,7 +237,8 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
 
     upload_hex_data(hex_map, &gpu_sim);
 
-    for _ in 0..100 {
+    // TODO: Keep an eye on whether 20 iterations is enough.
+    for _ in 0..20 {
         gpu_sim.run_repose_step(width, height);
     }
 
@@ -337,7 +354,7 @@ fn simulate_rainfall(
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
-            let source_hex = &hex_map[river_y][WIDTH_HEXAGONS as usize - 1];
+            let source_hex = &hex_map[RIVER_Y][WIDTH_HEXAGONS as usize - 1];
 
             let round = _step / (WIDTH_HEXAGONS as u32);
 
@@ -509,7 +526,7 @@ fn main() {
 
     // Time hex map creation
     let hex_start = Instant::now();
-    let river_y = (0.29 * HEIGHT_PIXELS as f32) as usize;
+
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         for x in 0..WIDTH_HEXAGONS {
@@ -526,20 +543,26 @@ fn main() {
                 distance_from_coast = x - TOTAL_SEA_WIDTH;
 
                 if y < NORTH_DESERT_HEIGHT {
-                    elevation = SEA_LEVEL + distance_from_coast as f32 * NORTH_DESERT_INCREMENT;
+                    elevation = SEA_LEVEL + distance_from_coast as f32 * NORTH_DESERT_INCREMENT + RANDOM_ELEVATION_FACTOR * 2.0;
                 } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     let factor = (y - NORTH_DESERT_HEIGHT) as f32 / CENTRAL_HIGHLAND_HEIGHT as f32;
-                    elevation = SEA_LEVEL + distance_from_coast as f32 * (CENTRAL_HIGHLAND_INCREMENT * factor + NORTH_DESERT_INCREMENT * (1.0 - factor));
+                    elevation = SEA_LEVEL + distance_from_coast as f32 * (CENTRAL_HIGHLAND_INCREMENT * factor + NORTH_DESERT_INCREMENT * (1.0 - factor)) + RANDOM_ELEVATION_FACTOR;
                 } else {
                     let factor = (y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / SOUTH_MOUNTAINS_HEIGHT as f32;
                     elevation = SEA_LEVEL + distance_from_coast as f32 * (SE_MOUNTAINS_INCREMENT * factor + CENTRAL_HIGHLAND_INCREMENT * (1.0 - factor));
                 }
             }
 
-            elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
+            // // TODO: Maybe ad bumper after NE plateau, but before SW range.
+            // let mut bumper_factor = 0.0;
+            // if y > NORTH_DESERT_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + BUMPER_RANGE {
+            //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
+            // } else if y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + BUMPER_RANGE {
+            //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32 - CENTRAL_HIGHLAND_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
+            // }
+            // elevation += BUMPER_MAX_ELEVATION * bumper_factor * (distance_from_coast as f32 / (TOTAL_LAND_WIDTH as f32));
 
             // TODO: More realistic seafloor depth, and fix islands.
-            // TODO: A ring of hexes, in a 5-hex radius, that get a 80-120 foot elevation increase. Somewhere at middle latitudes.
             // Special features:
             if x == BIG_VOLCANO_X && y == RIVER_Y {
                 // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
@@ -547,18 +570,16 @@ fn main() {
                 elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_PLATEAU_FRINGE && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE && y != RIVER_Y {
                 // The northeast plateau.
-                elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
-            } else if x > TOTAL_SEA_WIDTH && y > NE_PLATEAU_HEIGHT && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE {
-                // Ridge separating north desert from central highlands.
-                let ridge_elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
-                let factor = (x - TOTAL_SEA_WIDTH) as f32 / (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32;
-                elevation = ridge_elevation * factor + elevation * (1.0 - factor);
-            } else if x >= TOTAL_SEA_WIDTH && y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE {
+                // Note: elevation will be tweaked in the rainfall step, since there are some small details that need to match rain patterns.
+                elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION;
+            } else if x > SW_RANGE_X_START && x < SW_RANGE_X_START + SW_RANGE_WIDTH && y >= SW_RANGE_Y_START && y < SW_RANGE_Y_START + SW_RANGE_HEIGHT {
                 // A range on the northern edge of the southern mountains, tallest in the west.
-                let range_elevation = SEA_LEVEL + SW_RANGE_MAX_ELEVATION - rng.gen_range(0.0..HEX_SIZE);
-                let x_factor = 1.0 - (x - TOTAL_SEA_WIDTH) as f32 / (WIDTH_HEXAGONS - TOTAL_SEA_WIDTH) as f32;
-                let y_factor = 1.0 - f32::clamp((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT - SW_RANGE_FRINGE) as f32 / SW_RANGE_HEIGHT as f32, 0.0, 1.0);
-                elevation = range_elevation * (x_factor * y_factor) + elevation * (1.0 - x_factor * y_factor);
+                // Making this perfectly smooth, and relying on rain to add variation, is currently untested.
+                // Experimenting with adding this before the bumper.
+                elevation = SEA_LEVEL + SW_RANGE_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR;
+                if distance_from_coast < COAST_WIDTH {
+                    distance_from_coast = distance_from_coast.max((distance_from_coast + SW_RANGE_WIDTH / 2).min(y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT).min(NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_HEIGHT - y));
+                }
             } else if x == ISLAND_CHAIN_X {
                 // Need to figure out how to do this without causing out-of-control erosion of the sea floor.
                 // if y == FIRST_ISLAND_Y {
@@ -566,13 +587,12 @@ fn main() {
                 // } else if y == SECOND_ISLAND_Y {
                 //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + SECOND_ISLAND_MAX_ELEVATION);
                 // }
+            } else if hex_distance(x as i32, y as i32, RING_VALLEY_X as i32, RING_VALLEY_Y as i32) == RING_VALLEY_RADIUS as i32 {
+                elevation += RING_VALLEY_ELEVATION_BONUS;
             }
+            // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
 
-            // let mut water_depth = 0.0;
-            // // Initially there will be no dry land below sea level.
-            // if elevation < SEA_LEVEL {
-            //     water_depth = SEA_LEVEL - elevation;
-            // }
+            elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
 
             let mut rain_class = 0;
             if distance_from_coast < COAST_WIDTH {
@@ -587,7 +607,10 @@ fn main() {
             if y <= NE_PLATEAU_HEIGHT && x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                 rain_class = 4;
                 if y != RIVER_Y {
+                    // Making the interior perfectly flat is untested.
                     elevation -= HEX_SIZE;
+                } else {
+                    elevation -= rng.gen_range(0.0..HEX_SIZE);
                 }
             }
 

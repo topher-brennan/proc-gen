@@ -38,7 +38,7 @@ pub const MAIN_RIVER_WIDTH: usize = (800.0 * 2.0 / HEX_FACTOR) as usize;
 pub const DELTA_SEED_WIDTH: usize = 200;
 // River runs through north desert
 pub const NORTH_DESERT_WIDTH: usize = MAIN_RIVER_WIDTH + DELTA_SEED_WIDTH;
-pub const COAST_WIDTH: usize = (72.0 / HEX_FACTOR) as usize;
+pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
 pub const NE_PLATEAU_FRINGE: usize = 4;
 pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN) * NORTH_DESERT_HEIGHT as f32;
 // Rain on the part of the central highland whose east-west extent corresponds to the north desert.
@@ -48,7 +48,8 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN + 
 // Total rain north of central highland = NORTH_DESERT_RAIN + NE_PLATEAU_WIDTH * VERY_HIGH_RAIN * NE_PLATEAU_HEIGHT
 pub const NE_PLATEAU_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_PLATEAU_HEIGHT as f32 - LOW_RAIN * CENTRAL_HIGHLAND_HEIGHT as f32)) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_PLATEAU_WIDTH + NORTH_DESERT_WIDTH;
-pub const CONTINENTAL_SHELF_WIDTH: usize = (610.0 / HEX_FACTOR) as usize;
+pub const CONTINENTAL_SHELF_WIDTH: usize = (310.0 * 2.0 / HEX_FACTOR) as usize;
+pub const CONTINENTAL_SHELF_MIN_WIDTH: usize = (50.0 * 2.0 / HEX_FACTOR) as usize;
 pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
 pub const CONTINENTAL_SHELF_INCREMENT: f32 = CONTINENTAL_SHELF_DEPTH / CONTINENTAL_SHELF_WIDTH as f32;
 pub const CONTINENTAL_SLOPE_GRADE: f32 = 0.05; // About 3 degrees.
@@ -59,6 +60,11 @@ pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDTH - CONTINENTAL_SLOPE_WIDTH;
 // pub const SEA_LEVEL: f32 = (CONTINENTAL_SLOPE_WIDTH as f32) * CONTINENTAL_SLOPE_INCREMENT + CONTINENTAL_SHELF_DEPTH;
 pub const SEA_LEVEL: f32 = 0.0;
+
+// TODO: Might want to use a smaller value for the northern "bumper".
+pub const BUMPER_MAX_ELEVATION: f32 = HEX_SIZE / 3.0;
+pub const BUMPER_RANGE: usize = 120;
+
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 7_175.0;
 pub const NORTH_DESERT_INCREMENT: f32 = (NORTH_DESERT_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / (NORTH_DESERT_WIDTH - NE_PLATEAU_FRINGE) as f32;
 pub const NE_PLATEAU_MAX_ELEVATION: f32 = 14_872.0;
@@ -68,8 +74,10 @@ pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / TOTAL_LAND_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
 pub const SW_RANGE_FRINGE: usize = 4;
-pub const SW_RANGE_HEIGHT: usize = 120;
-pub const SW_RANGE_WIDTH: usize = (1080.0 / HEX_FACTOR) as usize;
+pub const SW_RANGE_HEIGHT: usize = 150 * 2;
+pub const SW_RANGE_X_START: usize = ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH + CONTINENTAL_SHELF_MIN_WIDTH * 5 / 2;
+pub const SW_RANGE_Y_START: usize = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_FRINGE * 4;
+pub const SW_RANGE_WIDTH: usize = (930.0 * 2.0 / HEX_FACTOR) as usize;
 // Unlike most other features, the SW range will be centered on the border between the central highland and the south mountains,
 // with only a small fringe on either side.
 
@@ -94,7 +102,7 @@ pub const MAX_SLOPE: f32 = 1.00;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
-pub const LOG_ROUNDS: u32 = 1;
+pub const LOG_ROUNDS: u32 = 25;
 
 pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
 pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
@@ -104,3 +112,9 @@ pub const FIRST_ISLAND_Y: usize = (12.75 * ONE_DEGREE_LATITUDE_MILES * 2.0) as u
 pub const FIRST_ISLAND_MAX_ELEVATION: f32 = 11_014.0;
 pub const SECOND_ISLAND_Y: usize = (9.56 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const SECOND_ISLAND_MAX_ELEVATION: f32 = 8_058.0;
+
+pub const RING_VALLEY_RADIUS: usize = 5;
+pub const RING_VALLEY_X: usize = (8.0 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
+pub const RING_VALLEY_Y: usize = COAST_WIDTH - RING_VALLEY_RADIUS;
+// TODO: Try setting this to an absurd value to confirm it works.
+pub const RING_VALLEY_ELEVATION_BONUS: f32 = 240.0;
