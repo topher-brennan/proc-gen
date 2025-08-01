@@ -38,7 +38,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (cell.suspended_load < capacity) {
         // erode
         // TODO: Look for better ways to prevent sea floor from being eroded below 0?
-        let amount = min(P.ke * (capacity - cell.suspended_load), max(cell.elevation - P.hex_size / 100.0, 0.0));
+        let amount = (capacity - cell.suspended_load);
         cell.elevation      -= amount;
         cell.suspended_load += amount;
     } else {
