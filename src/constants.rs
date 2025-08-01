@@ -114,7 +114,7 @@ pub const SECOND_ISLAND_Y: usize = (9.56 * ONE_DEGREE_LATITUDE_MILES * 2.0) as u
 pub const SECOND_ISLAND_MAX_ELEVATION: f32 = 8_058.0;
 
 pub const RING_VALLEY_RADIUS: usize = 5;
-pub const RING_VALLEY_X: usize = (8.0 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
-pub const RING_VALLEY_Y: usize = COAST_WIDTH - RING_VALLEY_RADIUS;
+pub const RING_VALLEY_X: usize = TOTAL_SEA_WIDTH + COAST_WIDTH - RING_VALLEY_RADIUS; 
+pub const RING_VALLEY_Y: usize = (8.0 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 // TODO: Try setting this to an absurd value to confirm it works.
 pub const RING_VALLEY_ELEVATION_BONUS: f32 = 240.0;
