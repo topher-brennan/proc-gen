@@ -32,10 +32,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var cell = hex_data[idx];
 
     // Slope and capacity
-    let slope = max((height(cell) - min_elev[idx]) / P.hex_size, 0.0);
-    let capacity = P.kc * cell.water_depth * min(slope, P.max_slope);
-    // let height_diff = max((height(cell) - min_elev[idx]), 0.0);
-    // let capacity = P.kc * min(cell.water_depth, min(height_diff, P.hex_size));
+    let height_diff = max((height(cell) - min_elev[idx]), 0.0);
+    let capacity = P.kc * min(cell.water_depth, min(height_diff, P.hex_size));
 
     if (cell.suspended_load < capacity) {
         // erode

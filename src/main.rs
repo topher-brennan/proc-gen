@@ -283,8 +283,8 @@ fn simulate_rainfall(
     upload_hex_data(hex_map, &gpu_sim);
 
     println!(
-        "Calculated constants: NORTH_DESERT_WIDTH {}  NE_PLATEAU_WIDTH {}  TOTAL_LAND_WIDTH {}  TOTAL_SEA_WIDTH {}  SW_RANGE_WIDTH {}",
-        NORTH_DESERT_WIDTH, NE_PLATEAU_WIDTH, TOTAL_LAND_WIDTH, TOTAL_SEA_WIDTH, SW_RANGE_WIDTH
+        "Calculated constants: NORTH_DESERT_WIDTH {}  NE_BASIN_WIDTH {}  TOTAL_LAND_WIDTH {}  TOTAL_SEA_WIDTH {}  SW_RANGE_WIDTH {}",
+        NORTH_DESERT_WIDTH, NE_BASIN_WIDTH, TOTAL_LAND_WIDTH, TOTAL_SEA_WIDTH, SW_RANGE_WIDTH
     );
     println!(
         "  NORTH_DESERT_INCREMENT {}  CENTRAL_HIGHLAND_INCREMENT {}  SE_MOUNTAINS_INCREMENT {}",
@@ -358,8 +358,7 @@ fn simulate_rainfall(
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
-            // TODO: Get rid of this.
-            let source_hex = &hex_map[RIVER_Y][WIDTH_HEXAGONS as usize - 1];
+            let source_hex = &hex_map[RIVER_Y][TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH];
 
             let round = _step / (WIDTH_HEXAGONS as u32);
 
@@ -444,9 +443,37 @@ fn simulate_rainfall(
         .map(|h| h.water_depth)
         .sum();
 
+    let westernmost_land_hex = hex_map.par_iter().map(|row| {
+        row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+    }).flatten().min_by_key(|h| h.coordinate.0);
+
+    let westernmost_land_hex_north = hex_map.par_iter().take(NORTH_DESERT_HEIGHT).map(|row| {
+        row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+    }).flatten().min_by_key(|h| h.coordinate.0);
+
+    let westernmost_land_hex_central = hex_map.par_iter().skip(NORTH_DESERT_HEIGHT).take(CENTRAL_HIGHLAND_HEIGHT).map(|row| {
+        row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+    }).flatten().min_by_key(|h| h.coordinate.0);
+
     println!(
-        "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
-        steps, total_outflow, water_remaining, water_remaining_north, water_remaining_central, total_sediment_in, total_sediment_out
+        "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes,",
+        steps,
+        total_outflow
+    );
+
+    println!(" westernmost land: {}, westernmost land north: {}, westernmost land south: {},",
+        westernmost_land_hex.map_or(0, |h| h.coordinate.0),
+        westernmost_land_hex_north.map_or(0, |h| h.coordinate.0),
+        westernmost_land_hex_central.map_or(0, |h| h.coordinate.0),
+    );
+
+    println!(
+        " water remaining on land: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
+        water_remaining,
+        water_remaining_north,
+        water_remaining_central,
+        total_sediment_in,
+        total_sediment_out
     );
 }
 
@@ -574,7 +601,6 @@ fn main() {
                 }
             }
 
-            // // TODO: Maybe ad bumper after NE plateau, but before SW range.
             // let mut bumper_factor = 0.0;
             // if y > NORTH_DESERT_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + BUMPER_RANGE {
             //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
@@ -589,15 +615,19 @@ fn main() {
                 // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
                 // usually into a cone.
                 elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
-            } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_PLATEAU_FRINGE && y <= NE_PLATEAU_HEIGHT + NE_PLATEAU_FRINGE && y != RIVER_Y {
-                // The northeast plateau.
+            } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
+                // The northeast basin.
                 // Note: elevation will be tweaked in the rainfall step, since there are some small details that need to match rain patterns.
-                elevation = SEA_LEVEL + NE_PLATEAU_MAX_ELEVATION;
+                elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
+                if y != RIVER_Y {
+                    elevation += HEX_SIZE;
+                }
             } else if x > SW_RANGE_X_START && x < SW_RANGE_X_START + SW_RANGE_WIDTH && y >= SW_RANGE_Y_START && y < SW_RANGE_Y_START + SW_RANGE_HEIGHT {
                 // A range on the northern edge of the southern mountains, tallest in the west.
                 // Making this perfectly smooth, and relying on rain to add variation, is currently untested.
                 // Experimenting with adding this before the bumper.
-                elevation = SEA_LEVEL + SW_RANGE_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR;
+                let factor = 1.0 - (y - SW_RANGE_Y_START) as f32 / SW_RANGE_HEIGHT as f32;
+                elevation = elevation * (1.0 - factor) + factor * SW_RANGE_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR;
                 if distance_from_coast < COAST_WIDTH {
                     distance_from_coast = distance_from_coast.max((distance_from_coast + SW_RANGE_WIDTH / 2).min(y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT).min(NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_HEIGHT - y));
                 }
@@ -625,13 +655,10 @@ fn main() {
             if y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                 rain_class += 1;
             }
-            if y <= NE_PLATEAU_HEIGHT && x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+            if y <= NE_BASIN_HEIGHT && x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                 rain_class = 4;
                 if y != RIVER_Y {
-                    // Making the interior perfectly flat is untested.
                     elevation -= HEX_SIZE;
-                } else {
-                    elevation -= rng.gen_range(0.0..HEX_SIZE);
                 }
             }
 
