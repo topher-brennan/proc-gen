@@ -136,7 +136,7 @@ fn hex_distance(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
     let adjusted_sea_level = SEA_LEVEL - WATER_THRESHOLD;
     if elevation < adjusted_sea_level {
-        let normalized_elevation = 1.0 - ((adjusted_sea_level - elevation) / ABYSSAL_PLAINS_DEPTH).min(1.0);
+        let normalized_elevation = ((elevation + ABYSSAL_PLAINS_DEPTH) / (adjusted_sea_level + ABYSSAL_PLAINS_DEPTH)).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
@@ -154,39 +154,39 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
         let max_land_height = (MAX_ELEVATION - adjusted_sea_level) * 256.0 / 255.0;
         let normalized_height = (land_height / max_land_height).min(1.0);
         
-        if normalized_height < 0.225 {
+        if normalized_height < 0.2 {
             // Green to yellow
-            let factor = normalized_height / 0.225;
+            let factor = normalized_height / 0.2;
             let red = (255.0 * factor) as u8;
             let green = 255;
             let blue = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.45 {
+        } else if normalized_height < 0.4 {
             // Yellow (255,255,0) → Orange (255,127,0)
-            let factor = (normalized_height - 0.225) / 0.225; // 0..1
+            let factor = (normalized_height - 0.2) / 0.2; // 0..1
             let red   = 255;
             let green = (127.0 + 128.0 * (1.0 - factor)) as u8; // 255→127
             let blue  = 0;
             Rgb([red, green, blue])
         // TODO: The later stages of this transition don't subjectively look right to me,
         // is there some standard way to do this?
-        } else if normalized_height < 0.675 {
+        } else if normalized_height < 0.6 {
             // Orange (255,127,0) to Red (255,0,0)
-            let factor = (normalized_height - 0.45) / 0.225; // 0..1
+            let factor = (normalized_height - 0.4) / 0.2; // 0..1
             let red = 255;
             let green = (127.0 * (1.0 - factor)) as u8; // 127→0
             let blue = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.9 {
+        } else if normalized_height < 0.8 {
             // Red to brown
-            let factor = (normalized_height - 0.675) / 0.225;
+            let factor = (normalized_height - 0.6) / 0.2;
             let red = 62 + (193.0 * (1.0 - factor)) as u8; // 255→62
             let green = 28 * factor as u8;
             let blue = 0;
             Rgb([red, green, blue])
         } else {
             // Brown to white
-            let factor = (normalized_height - 0.9) / 0.1;
+            let factor = (normalized_height - 0.8) / 0.2;
             let red = 62 + (193.0 * factor) as u8; // 62→255
             let green = 28 + (237.0 * factor) as u8;
             let blue = (255.0 * factor) as u8;
@@ -325,7 +325,7 @@ fn simulate_rainfall(
                     let mut sum = 0.0f32;
                     let mut row_max = 0.0f32;
                     for h in row {
-                        if h.coordinate.0 > TOTAL_SEA_WIDTH {
+                        if h.elevation > SEA_LEVEL {
                             let d = h.water_depth;
                             sum += d;
                             if d > row_max {
@@ -345,6 +345,10 @@ fn simulate_rainfall(
                     },
                 );
 
+            let westernmost_land_hex = hex_map.par_iter().map(|row| {
+                row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+            }).flatten().min_by_key(|h| h.coordinate.0);
+
             let mean_depth = water_on_land / cells_above_sea_level as f32;
 
             let wet_cells: usize = hex_map
@@ -354,6 +358,7 @@ fn simulate_rainfall(
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
+            // TODO: Get rid of this.
             let source_hex = &hex_map[RIVER_Y][WIDTH_HEXAGONS as usize - 1];
 
             let round = _step / (WIDTH_HEXAGONS as u32);
@@ -375,7 +380,7 @@ fn simulate_rainfall(
             });
 
             println!(
-                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft",
+                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  westernmost land X {}",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
                 water_on_land,
@@ -384,6 +389,7 @@ fn simulate_rainfall(
                 wet_cells,
                 wet_cells_percentage,
                 source_hex.elevation,
+                westernmost_land_hex.map_or(0, |h| h.coordinate.0),
             );
             println!("  min elevation: {:.2} ft  max elevation: {:.2} ft  time: {:?}", min_elevation, max_elevation, water_start.elapsed());
 
@@ -419,13 +425,28 @@ fn simulate_rainfall(
 
     let water_remaining: f32 = hex_map
         .iter()
-        .flat_map(|row| row.iter())
+        .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
+        .map(|h| h.water_depth)
+        .sum();
+
+    let water_remaining_north: f32 = hex_map
+        .iter()
+        .take(NORTH_DESERT_HEIGHT)
+        .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
+        .map(|h| h.water_depth)
+        .sum();
+
+    let water_remaining_central: f32 = hex_map
+        .iter()
+        .skip(NORTH_DESERT_HEIGHT)
+        .take(CENTRAL_HIGHLAND_HEIGHT)
+        .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
         .map(|h| h.water_depth)
         .sum();
 
     println!(
-        "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
-        steps, total_outflow, water_remaining, total_sediment_in, total_sediment_out
+        "Rainfall simulation complete – steps: {}, total outflow to sea: {:.2} ft-hexes, water remaining on land: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
+        steps, total_outflow, water_remaining, water_remaining_north, water_remaining_central, total_sediment_in, total_sediment_out
     );
 }
 

@@ -54,7 +54,7 @@ pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
 pub const CONTINENTAL_SHELF_INCREMENT: f32 = CONTINENTAL_SHELF_DEPTH / CONTINENTAL_SHELF_WIDTH as f32;
 pub const CONTINENTAL_SLOPE_GRADE: f32 = 0.05; // About 3 degrees.
 pub const CONTINENTAL_SLOPE_INCREMENT: f32 = CONTINENTAL_SLOPE_GRADE * HEX_SIZE * HEX_FACTOR;
-pub const ABYSSAL_PLAINS_DEPTH: f32 = 16_762.0;
+pub const ABYSSAL_PLAINS_DEPTH: f32 = 10_000.0;
 pub const CONTINENTAL_SLOPE_WIDTH: usize = ((ABYSSAL_PLAINS_DEPTH - CONTINENTAL_SHELF_DEPTH) / CONTINENTAL_SLOPE_INCREMENT) as usize;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDTH - CONTINENTAL_SLOPE_WIDTH;
@@ -73,13 +73,12 @@ pub const CENTRAL_HIGHLAND_INCREMENT: f32 = (CENTRAL_HIGHLAND_MAX_ELEVATION - RA
 pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / TOTAL_LAND_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
-pub const SW_RANGE_FRINGE: usize = 4;
+// TODO: Get rid of this when I'm sure I don't need it.
+pub const SW_RANGE_FRINGE: usize = 0;
 pub const SW_RANGE_HEIGHT: usize = 150 * 2;
-pub const SW_RANGE_X_START: usize = ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH + CONTINENTAL_SHELF_MIN_WIDTH * 5 / 2;
+pub const SW_RANGE_X_START: usize = TOTAL_SEA_WIDTH as usize;
 pub const SW_RANGE_Y_START: usize = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_FRINGE * 4;
-pub const SW_RANGE_WIDTH: usize = (930.0 * 2.0 / HEX_FACTOR) as usize;
-// Unlike most other features, the SW range will be centered on the border between the central highland and the south mountains,
-// with only a small fringe on either side.
+pub const SW_RANGE_WIDTH: usize = NORTH_DESERT_WIDTH;
 
 pub const KC: f32 = 1.0; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
@@ -91,7 +90,7 @@ pub const RIVER_WATER_PER_STEP: f32 = 0.371; // Feet
 // In the river bed.
 pub const TARGET_DROP_PER_HEX: f32 = 0.4; // Feet
 pub const TARGET_RIVER_DEPTH: f32 = 32.0; // Feet
-pub const FLOW_FACTOR: f32 = 0.9;
+pub const FLOW_FACTOR: f32 = 0.90;
 // One inch of rain per year.
 pub const BASE_RAINFALL: f32 = 1.0 / 12.0 / 365.0 / 24.0 / 100.0; // Feet
 pub const DEFAULT_ROUNDS: u32 = 1000;
@@ -102,7 +101,7 @@ pub const MAX_SLOPE: f32 = 1.00;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
-pub const LOG_ROUNDS: u32 = 25;
+pub const LOG_ROUNDS: u32 = 10;
 
 pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
 pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
@@ -114,7 +113,7 @@ pub const SECOND_ISLAND_Y: usize = (9.56 * ONE_DEGREE_LATITUDE_MILES * 2.0) as u
 pub const SECOND_ISLAND_MAX_ELEVATION: f32 = 8_058.0;
 
 pub const RING_VALLEY_RADIUS: usize = 5;
-pub const RING_VALLEY_X: usize = TOTAL_SEA_WIDTH + COAST_WIDTH - RING_VALLEY_RADIUS; 
+pub const RING_VALLEY_X: usize = TOTAL_SEA_WIDTH + COAST_WIDTH - RING_VALLEY_RADIUS;
 pub const RING_VALLEY_Y: usize = (8.0 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 // TODO: Try setting this to an absurd value to confirm it works.
 pub const RING_VALLEY_ELEVATION_BONUS: f32 = 240.0;
