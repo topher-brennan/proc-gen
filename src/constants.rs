@@ -81,7 +81,7 @@ pub const SW_RANGE_X_START: usize = TOTAL_SEA_WIDTH as usize;
 pub const SW_RANGE_Y_START: usize = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_FRINGE * 4;
 pub const SW_RANGE_WIDTH: usize = NORTH_DESERT_WIDTH;
 
-pub const KC: f32 = 0.2; // capacity coefficient
+pub const KC: f32 = 0.25; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
 pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
 
@@ -118,3 +118,21 @@ pub const RING_VALLEY_X: usize = TOTAL_SEA_WIDTH + COAST_WIDTH - RING_VALLEY_RAD
 pub const RING_VALLEY_Y: usize = (8.0 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 // TODO: Try setting this to an absurd value to confirm it works.
 pub const RING_VALLEY_ELEVATION_BONUS: f32 = 240.0;
+
+// TODO: Evaporation. See if we can keep mean depth on land going over 4 inches.
+pub const TARGET_DELTA_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
+pub const TARGET_MEAN_DEPTH_LAND: f32 = 4.0 / 12.0;
+pub const TOTAL_NE_BASIN_RAIN: f32 = (NE_BASIN_HEIGHT * NE_BASIN_WIDTH) as f32 * VERY_HIGH_RAIN;
+
+pub const TARGET_COAST_WIDTH: usize = COAST_WIDTH + TARGET_DELTA_WIDTH;
+pub const TOTAL_NORTH_COAST_RAIN: f32 = (TARGET_COAST_WIDTH * NORTH_DESERT_HEIGHT) as f32 * LOW_RAIN;
+pub const TOTAL_CENTRAL_COAST_RAIN: f32 = (TARGET_COAST_WIDTH * CENTRAL_HIGHLAND_HEIGHT) as f32 * MEDIUM_RAIN;
+pub const TOTAL_SOUTH_COAST_RAIN: f32 = (TARGET_COAST_WIDTH * SOUTH_MOUNTAINS_HEIGHT) as f32 * HIGH_RAIN;
+
+pub const TOTAL_NORTH_RAIN: f32 = TOTAL_NE_BASIN_RAIN + TOTAL_NORTH_COAST_RAIN + (MAIN_RIVER_WIDTH * NORTH_DESERT_HEIGHT) as f32 * VERY_LOW_RAIN;
+pub const TOTAL_CENTRAL_RAIN: f32 = TOTAL_CENTRAL_COAST_RAIN + (TOTAL_LAND_WIDTH - COAST_WIDTH) as f32 * LOW_RAIN;
+pub const TOTAL_SOUTH_RAIN: f32 = TOTAL_SOUTH_COAST_RAIN + (TOTAL_LAND_WIDTH - COAST_WIDTH) as f32 * MEDIUM_RAIN;
+
+pub const TOTAL_RAIN: f32 = (TOTAL_NORTH_RAIN + TOTAL_CENTRAL_RAIN + TOTAL_SOUTH_RAIN) * RAINFALL_FACTOR;
+pub const AVERAGE_RAIN: f32 = TOTAL_RAIN / ((TOTAL_LAND_WIDTH + TARGET_DELTA_WIDTH) * HEIGHT_PIXELS) as f32;
+pub const EVAPORATION_FACTOR: f32 = AVERAGE_RAIN * 0.4;
