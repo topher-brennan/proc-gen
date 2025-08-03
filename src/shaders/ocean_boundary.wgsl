@@ -52,9 +52,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (height(cell) > params.sea_level) {
         let fluid_out: f32 = height(cell) - params.sea_level;
         water_out = fluid_out * (1.0 - sediment_fraction(cell));
-        // Experiment to see if ocean sediment outflows could be causing runaway errosion.
-        // TODO: Watch out for sediment piling up on the edge here.
-        // sediment_out = fluid_out * sediment_fraction(cell);
+        // TODO: Continue experimenting with turning sediment outflows on/off.
+        sediment_out = fluid_out * sediment_fraction(cell);
     }
 
     // Write outflow amounts

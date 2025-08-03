@@ -103,6 +103,12 @@ study" and Edmonds & Slingerland 2010, "Significant effect of sediment cohesion 
 • [Nardin & Fagherazzi 2012](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2012GL051788) – wave influence on mouth-bar evolution.
 • Julien 2010, Erosion and Sedimentation, 2nd ed – sediment transport formulas for rivers.
 
+
+Experimental Notes
+------------------
+ westernmost land: 2074, westernmost land north: 2087, westernmost land south: 2129,
+ water remaining on land: 981308.94 ft-hexes, water remaining north: 381608.38 ft-hexes, water remaining central: 474125.72 ft-hexes,
+
 Performance optimization
 ------------------------
 Recommendations from GPT-o3. (Human's note: o3's analysis suggest performance gains are not large enough to make me want to prioritize.)

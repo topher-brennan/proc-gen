@@ -102,7 +102,7 @@ pub const MAX_SLOPE: f32 = 1.00;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
-pub const LOG_ROUNDS: u32 = 10;
+pub const LOG_ROUNDS: u32 = 1;
 
 pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
 pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
