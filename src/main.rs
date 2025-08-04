@@ -300,6 +300,11 @@ fn simulate_rainfall(
         AVERAGE_RAIN,
         EVAPORATION_FACTOR
     );
+    println!(
+        "  RIVER_SOURCE_X {}  RIVER_Y {}",
+        RIVER_SOURCE_X,
+        RIVER_Y
+    );
 
     for _step in 0..steps {
         // Mass balance stats per step
@@ -364,7 +369,7 @@ fn simulate_rainfall(
 
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
-            let source_hex = &hex_map[RIVER_Y][TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH];
+            let source_hex = &hex_map[RIVER_Y][RIVER_SOURCE_X];
 
             let round = _step / (WIDTH_HEXAGONS as u32);
 
@@ -438,6 +443,13 @@ fn simulate_rainfall(
         .iter()
         .take(NORTH_DESERT_HEIGHT)
         .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
+        .map(|h| h.water_depth)
+        .sum();
+
+    let water_remaining_ne_basin: f32 = hex_map
+        .iter()
+        .take(NORTH_DESERT_HEIGHT)
+        .flat_map(|row| row.iter().skip(TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH))
         .map(|h| h.water_depth)
         .sum();
 
@@ -583,6 +595,8 @@ fn main() {
 
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
+        let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
+
         for x in 0..WIDTH_HEXAGONS {
             let mut elevation = 0.0;
             let mut distance_from_coast = 0;
@@ -623,17 +637,21 @@ fn main() {
                 elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                 // The northeast basin.
-                // Note: elevation will be tweaked in the rainfall step, since there are some small details that need to match rain patterns.
-                elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
-                if y != RIVER_Y {
+                let distance_from_source = hex_distance(RIVER_SOURCE_X as i32, RIVER_Y as i32, x as i32, y as i32);
+                let max_possible_distance_from_source = hex_distance(RIVER_SOURCE_X as i32, RIVER_Y as i32, (WIDTH_HEXAGONS - 1) as i32, 0);
+                let factor = distance_from_source as f32 / max_possible_distance_from_source as f32;
+                elevation = (NE_BASIN_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) * factor + elevation * (1.0 - factor);
+
+                // elevation = NORTH_DESERT_MAX_ELEVATION;
+
+                // TODO: Refactor this so I'm not doing the goofy thing in the rainfall step.
+                if distance_from_river_y > 2 {
                     elevation += HEX_SIZE;
                 }
             } else if x > SW_RANGE_X_START && x < SW_RANGE_X_START + SW_RANGE_WIDTH && y >= SW_RANGE_Y_START && y < SW_RANGE_Y_START + SW_RANGE_HEIGHT {
-                // A range on the northern edge of the southern mountains, tallest in the west.
-                // Making this perfectly smooth, and relying on rain to add variation, is currently untested.
-                // Experimenting with adding this before the bumper.
-                let factor = 1.0 - (y - SW_RANGE_Y_START) as f32 / SW_RANGE_HEIGHT as f32;
-                elevation = elevation * (1.0 - factor) + factor * SW_RANGE_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR;
+                // A range on the northern edge of the southern mountains
+                elevation = SW_RANGE_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR;
+                // TODO: This logic is from when the range was extending out beyond the normal coastline, might not keep.
                 if distance_from_coast < COAST_WIDTH {
                     distance_from_coast = distance_from_coast.max((distance_from_coast + SW_RANGE_WIDTH / 2).min(y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT).min(NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_HEIGHT - y));
                 }
@@ -661,10 +679,14 @@ fn main() {
             if y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                 rain_class += 1;
             }
-            if y <= NE_BASIN_HEIGHT && x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
-                rain_class = 4;
-                if y != RIVER_Y {
-                    elevation -= HEX_SIZE;
+            if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                if y <= NE_BASIN_HEIGHT {
+                    rain_class = 4;
+                    if distance_from_river_y > 2 {
+                        elevation -= HEX_SIZE;
+                    }
+                } else {
+                    rain_class = -1;
                 }
             }
 
@@ -676,7 +698,7 @@ fn main() {
                 3 => HIGH_RAIN,
                 4 => VERY_HIGH_RAIN,
                 // default error case
-                _ => VERY_LOW_RAIN,
+                _ => 0.0,
             };
 
             hex_map[y as usize].push(Hex {

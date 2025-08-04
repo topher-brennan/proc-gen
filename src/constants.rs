@@ -21,7 +21,7 @@ pub const HIGH_RAIN: f32 = 34.0;
 // Used for NE basin.
 pub const VERY_HIGH_RAIN: f32 = 49.0;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
-pub const RAINFALL_FACTOR: f32 = 1.0 / 12.0 / 365.0 / 24.0 / 6.0;
+pub const RAINFALL_FACTOR: f32 = 1.0 / 12.0 / 365.0 / 24.0;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
@@ -58,6 +58,7 @@ pub const CONTINENTAL_SLOPE_INCREMENT: f32 = CONTINENTAL_SLOPE_GRADE * HEX_SIZE 
 pub const ABYSSAL_PLAINS_DEPTH: f32 = 10_000.0;
 pub const CONTINENTAL_SLOPE_WIDTH: usize = ((ABYSSAL_PLAINS_DEPTH - CONTINENTAL_SHELF_DEPTH) / CONTINENTAL_SLOPE_INCREMENT) as usize;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
+pub const RIVER_SOURCE_X: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE + 1;
 pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDTH - CONTINENTAL_SLOPE_WIDTH;
 // pub const SEA_LEVEL: f32 = (CONTINENTAL_SLOPE_WIDTH as f32) * CONTINENTAL_SLOPE_INCREMENT + CONTINENTAL_SHELF_DEPTH;
 pub const SEA_LEVEL: f32 = 0.0;
@@ -82,8 +83,8 @@ pub const SW_RANGE_Y_START: usize = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGH
 pub const SW_RANGE_WIDTH: usize = NORTH_DESERT_WIDTH;
 
 pub const KC: f32 = 0.25; // capacity coefficient
-pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
-pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
+pub const KE: f32 = 0.1; // erosion rate fraction
+pub const KD: f32 = 0.1; // deposition rate fraction
 
 // TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE basin.
 // 0.01 hours of average flow through the Aswan Dam.
@@ -130,9 +131,9 @@ pub const TOTAL_CENTRAL_COAST_RAIN: f32 = (TARGET_COAST_WIDTH * CENTRAL_HIGHLAND
 pub const TOTAL_SOUTH_COAST_RAIN: f32 = (TARGET_COAST_WIDTH * SOUTH_MOUNTAINS_HEIGHT) as f32 * HIGH_RAIN;
 
 pub const TOTAL_NORTH_RAIN: f32 = TOTAL_NE_BASIN_RAIN + TOTAL_NORTH_COAST_RAIN + (MAIN_RIVER_WIDTH * NORTH_DESERT_HEIGHT) as f32 * VERY_LOW_RAIN;
-pub const TOTAL_CENTRAL_RAIN: f32 = TOTAL_CENTRAL_COAST_RAIN + (TOTAL_LAND_WIDTH - COAST_WIDTH) as f32 * LOW_RAIN;
-pub const TOTAL_SOUTH_RAIN: f32 = TOTAL_SOUTH_COAST_RAIN + (TOTAL_LAND_WIDTH - COAST_WIDTH) as f32 * MEDIUM_RAIN;
+pub const TOTAL_CENTRAL_RAIN: f32 = TOTAL_CENTRAL_COAST_RAIN + (MAIN_RIVER_WIDTH * CENTRAL_HIGHLAND_HEIGHT) as f32 * LOW_RAIN;
+pub const TOTAL_SOUTH_RAIN: f32 = TOTAL_SOUTH_COAST_RAIN + (MAIN_RIVER_WIDTH * SOUTH_MOUNTAINS_HEIGHT) as f32 * MEDIUM_RAIN;
 
 pub const TOTAL_RAIN: f32 = (TOTAL_NORTH_RAIN + TOTAL_CENTRAL_RAIN + TOTAL_SOUTH_RAIN) * RAINFALL_FACTOR;
 pub const AVERAGE_RAIN: f32 = TOTAL_RAIN / ((TOTAL_LAND_WIDTH + TARGET_DELTA_WIDTH) * HEIGHT_PIXELS) as f32;
-pub const EVAPORATION_FACTOR: f32 = AVERAGE_RAIN * 0.4;
+pub const EVAPORATION_FACTOR: f32 = AVERAGE_RAIN / TARGET_MEAN_DEPTH_LAND;

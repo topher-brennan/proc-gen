@@ -106,8 +106,11 @@ study" and Edmonds & Slingerland 2010, "Significant effect of sediment cohesion 
 
 Experimental Notes
 ------------------
- westernmost land: 2074, westernmost land north: 2087, westernmost land south: 2129,
- water remaining on land: 981308.94 ft-hexes, water remaining north: 381608.38 ft-hexes, water remaining central: 474125.72 ft-hexes,
+Round 99: water in 1.282  stored 1050952  mean depth 0.21 ft  max depth 1090.52 ft  wet 215765 (4.3%)  source elevation 7470.32 ft  westernmost land X 2021
+  min elevation: -10005.46 ft  max elevation: 18474.50 ft  time: 2252.2555236s
+Rainfall simulation complete – steps: 443400, total outflow to sea: 0.00 ft-hexes,
+ westernmost land: 2020, westernmost land north: 2031, westernmost land south: 2076,
+ water remaining on land: 1042841.00 ft-hexes, water remaining north: 326685.81 ft-hexes, water remaining central: 220345.70 ft-hexes, sediment in 0.0,  sediment out 0.0
 
 Performance optimization
 ------------------------
