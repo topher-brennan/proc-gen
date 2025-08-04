@@ -133,6 +133,19 @@ fn hex_distance(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     }
 }
 
+fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    let dx = (x2 - x1) as f32 * HEX_FACTOR;
+    let mut dy = (y2 - y1) as f32;
+    if (x2 - x1) % 2 == 1 {
+        if x1 % 2 == 0 {
+            dy += 0.5;
+        } else {
+            dy -= 0.5;
+        }
+    }
+    return (dx.powi(2) + dy.powi(2)).sqrt() as i32;
+}
+
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
     let adjusted_sea_level = SEA_LEVEL - WATER_THRESHOLD;
     if elevation < adjusted_sea_level {
@@ -486,9 +499,10 @@ fn simulate_rainfall(
     );
 
     println!(
-        " water remaining on land: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
+        " water remaining on land: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining NE basin: {:.2} ft-hexes,  water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
         water_remaining,
         water_remaining_north,
+        water_remaining_ne_basin,
         water_remaining_central,
         total_sediment_in,
         total_sediment_out
@@ -637,8 +651,8 @@ fn main() {
                 elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                 // The northeast basin.
-                let distance_from_source = hex_distance(RIVER_SOURCE_X as i32, RIVER_Y as i32, x as i32, y as i32);
-                let max_possible_distance_from_source = hex_distance(RIVER_SOURCE_X as i32, RIVER_Y as i32, (WIDTH_HEXAGONS - 1) as i32, 0);
+                let distance_from_source = hex_distance_pythagorean(RIVER_SOURCE_X as i32, RIVER_Y as i32, x as i32, y as i32);
+                let max_possible_distance_from_source = hex_distance_pythagorean(RIVER_SOURCE_X as i32, RIVER_Y as i32, (WIDTH_HEXAGONS - 1) as i32, 0);
                 let factor = distance_from_source as f32 / max_possible_distance_from_source as f32;
                 elevation = (NE_BASIN_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) * factor + elevation * (1.0 - factor);
 
@@ -700,6 +714,9 @@ fn main() {
                 // default error case
                 _ => 0.0,
             };
+
+            // Not sure why I keep needing these little adjustments to avoid magenta
+            elevation = elevation.min(MAX_ELEVATION * 255.0 / 256.0);
 
             hex_map[y as usize].push(Hex {
                 coordinate: (x, y),
