@@ -26,7 +26,7 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Only add rainfall to land (elevation >= sea_level)
     if (hex_data[index].elevation >= constants.sea_level) {
+        hex_data[index].water_depth -= constants.evaporation_factor * hex_data[index].water_depth;
         hex_data[index].water_depth += hex_data[index].rainfall;
-        hex_data[index].water_depth -= constants.evaporation_factor * min(hex_data[index].water_depth, 26.4);
     }
 } 

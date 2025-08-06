@@ -135,8 +135,20 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let target_index = get_hex_index(target_x, target_y);
         let target_hex = hex_data[target_index];
         let diff = height(hex) - height(target_hex);
-        let move_f = min(select(diff * constants.flow_factor, f, diff > f), constants.max_flow);
-        
+        // Old formula based on two-way fork rather than three-way
+        // let move_f = min(select(diff * constants.flow_factor, f, diff > f), constants.max_flow);
+
+        var move_f = 0.0;
+        if (2.0 * f <= diff) {
+            move_f = f;
+        } else if (f < diff && diff < 2.0 * f) {
+            move_f = (diff - f) + (2.0 * f - diff) * constants.flow_factor;
+        } else { // diff <= f
+            move_f = diff * constants.flow_factor;
+        }
+
+        move_f = min(move_f, constants.max_flow);
+
         if (move_f > 0.0) {
             next_water[index] = (1.0 - sediment_fraction(hex)) * move_f;
             next_load[index] = sediment_fraction(hex) * move_f;

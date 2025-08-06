@@ -49,10 +49,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var water_out: f32 = 0.0;
     var sediment_out: f32 = 0.0;
-    if (height(cell) > params.sea_level) {
-        let fluid_out: f32 = height(cell) - params.sea_level;
-        water_out = fluid_out * (1.0 - sediment_fraction(cell));
-        // TODO: Continue experimenting with turning sediment outflows on/off.
+
+    // Note that it says "out" but there's no guard against negative values, allowing inflows.
+    // Outflows cannot exceed what's available, but there's no limit on inflows.
+    let fluid_out: f32 = min(height(cell) - params.sea_level, total_fluid(cell));
+    water_out = fluid_out * (1.0 - sediment_fraction(cell));
+    // TODO: Continue experimenting with turning sediment outflows on/off.
+    if (fluid_out < 0.0 || cell.elevation > -10000.0) {
         sediment_out = fluid_out * sediment_fraction(cell);
     }
 
