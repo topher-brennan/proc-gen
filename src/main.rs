@@ -147,9 +147,8 @@ fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
-    let adjusted_sea_level = SEA_LEVEL - WATER_THRESHOLD;
-    if elevation < adjusted_sea_level {
-        let normalized_elevation = ((elevation + ABYSSAL_PLAINS_DEPTH) / (adjusted_sea_level + ABYSSAL_PLAINS_DEPTH)).min(1.0);
+    if elevation < SEA_LEVEL {
+        let normalized_elevation = ((elevation + ABYSSAL_PLAINS_DEPTH) / (ABYSSAL_PLAINS_DEPTH)).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
@@ -162,9 +161,9 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
         }
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
-        let land_height = elevation - adjusted_sea_level;
+        let land_height = elevation;
         // TODO: I expect the 256.0 / 255.0 is compensating for a math error somewhere else.
-        let max_land_height = (MAX_ELEVATION - adjusted_sea_level) * 256.0 / 255.0;
+        let max_land_height = MAX_ELEVATION * 256.0 / 255.0;
         let normalized_height = (land_height / max_land_height).min(1.0);
         
         if normalized_height < 0.2 {
@@ -308,9 +307,8 @@ fn simulate_rainfall(
         SEA_LEVEL, NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT, CONTINENTAL_SLOPE_INCREMENT
     );
     println!(
-        "  RAINFALL_FACTOR {}  AVERAGE_RAIN {}  EVAPORATION_FACTOR {}",
+        "  RAINFALL_FACTOR {}  EVAPORATION_FACTOR {}",
         RAINFALL_FACTOR,
-        AVERAGE_RAIN,
         EVAPORATION_FACTOR
     );
     println!(
@@ -321,12 +319,11 @@ fn simulate_rainfall(
 
     for _step in 0..steps {
         // Mass balance stats per step
-        let rainfall_added = (width * height) as f32 * BASE_RAINFALL;
         let mut step_outflow = 0.0f32;
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
 
-        if _step % (WIDTH_HEXAGONS as u32 * LOG_ROUNDS) == 0 {
+        if _step % ((WIDTH_HEXAGONS / 4) as u32 * LOG_ROUNDS) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -337,6 +334,11 @@ fn simulate_rainfall(
                 cell.water_depth = h.water_depth;
                 cell.suspended_load = h.suspended_load;
             }
+
+            let rainfall_added: f32 = hex_map
+                .par_iter()
+                .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL).fold(0.0, |acc, h| acc + h.rainfall))
+                .sum();
 
             let cells_above_sea_level: usize = hex_map
                 .par_iter()
@@ -369,8 +371,9 @@ fn simulate_rainfall(
                     },
                 );
 
+            // Experimenting with h.elevation > SEA_LEVEL or h.water_depth <= WATER_THRESHOLD.
             let westernmost_land_hex = hex_map.par_iter().map(|row| {
-                row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+                row.iter().filter(|h| h.water_depth <= WATER_THRESHOLD).min_by_key(|h| h.coordinate.0)
             }).flatten().min_by_key(|h| h.coordinate.0);
 
             let mean_depth = water_on_land / cells_above_sea_level as f32;
@@ -474,16 +477,17 @@ fn simulate_rainfall(
         .map(|h| h.water_depth)
         .sum();
 
+    // Experimenting with h.elevation > SEA_LEVEL or h.water_depth <= WATER_THRESHOLD.
     let westernmost_land_hex = hex_map.par_iter().map(|row| {
-        row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+        row.iter().filter(|h| h.water_depth <= WATER_THRESHOLD).min_by_key(|h| h.coordinate.0)
     }).flatten().min_by_key(|h| h.coordinate.0);
 
     let westernmost_land_hex_north = hex_map.par_iter().take(NORTH_DESERT_HEIGHT).map(|row| {
-        row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+        row.iter().filter(|h| h.water_depth <= WATER_THRESHOLD).min_by_key(|h| h.coordinate.0)
     }).flatten().min_by_key(|h| h.coordinate.0);
 
     let westernmost_land_hex_central = hex_map.par_iter().skip(NORTH_DESERT_HEIGHT).take(CENTRAL_HIGHLAND_HEIGHT).map(|row| {
-        row.iter().filter(|h| h.elevation > SEA_LEVEL).min_by_key(|h| h.coordinate.0)
+        row.iter().filter(|h| h.water_depth <= WATER_THRESHOLD).min_by_key(|h| h.coordinate.0)
     }).flatten().min_by_key(|h| h.coordinate.0);
 
     println!(
@@ -651,16 +655,11 @@ fn main() {
                 elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                 // The northeast basin.
-                let distance_from_source = hex_distance_pythagorean(RIVER_SOURCE_X as i32, RIVER_Y as i32, x as i32, y as i32);
-                let max_possible_distance_from_source = hex_distance_pythagorean(RIVER_SOURCE_X as i32, RIVER_Y as i32, (WIDTH_HEXAGONS - 1) as i32, 0);
-                let factor = distance_from_source as f32 / max_possible_distance_from_source as f32;
-                elevation = (NE_BASIN_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) * factor + elevation * (1.0 - factor);
-
-                // elevation = NORTH_DESERT_MAX_ELEVATION;
-
                 // TODO: Refactor this so I'm not doing the goofy thing in the rainfall step.
-                if distance_from_river_y > 2 {
-                    elevation += HEX_SIZE;
+                elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
+                if distance_from_river_y > 0 {
+                    let factor = (distance_from_river_y as f32 / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32)).min(1.0);
+                    elevation += RANDOM_ELEVATION_FACTOR * factor;
                 }
             } else if x > SW_RANGE_X_START && x < SW_RANGE_X_START + SW_RANGE_WIDTH && y >= SW_RANGE_Y_START && y < SW_RANGE_Y_START + SW_RANGE_HEIGHT {
                 // A range on the northern edge of the southern mountains
@@ -681,10 +680,12 @@ fn main() {
             }
             // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
 
-            elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
+            if distance_from_river_y > 0 || x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE - (RANDOM_ELEVATION_FACTOR / NORTH_DESERT_INCREMENT) as usize {
+                elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
+            }
 
             let mut rain_class = 0;
-            if distance_from_coast < COAST_WIDTH {
+            if x > TOTAL_SEA_WIDTH && distance_from_coast < COAST_WIDTH {
                 rain_class += 1;
             }
             if y > NORTH_DESERT_HEIGHT {
@@ -696,9 +697,7 @@ fn main() {
             if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                 if y <= NE_BASIN_HEIGHT {
                     rain_class = 4;
-                    if distance_from_river_y > 2 {
-                        elevation -= HEX_SIZE;
-                    }
+                    elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
                 } else {
                     rain_class = -1;
                 }
@@ -730,7 +729,7 @@ fn main() {
 
     let_slopes_settle(&mut hex_map);
     fill_sea(&mut hex_map);
-    prefill_basins(&mut hex_map);
+    // prefill_basins(&mut hex_map);
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
