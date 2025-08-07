@@ -77,7 +77,6 @@ pub const NE_BASIN_ELEVATION: f32 = 636.0;
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 10_131.0;
 pub const CENTRAL_HIGHLAND_INCREMENT: f32 = (CENTRAL_HIGHLAND_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
 // With Perlin noise, actual elevation will likely be lower than this.
-// E.g. 16522.40, 15535.90
 pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
@@ -104,7 +103,7 @@ pub const TARGET_RIVER_DEPTH: f32 = 32.0; // Feet
 pub const FLOW_FACTOR: f32 = 0.90;
 // Might take 7k-10k rounds to carve out the river valley I want.
 pub const DEFAULT_ROUNDS: u32 = 1_000;
-pub const WATER_THRESHOLD: f32 = 1.0; // Feet
+pub const WATER_THRESHOLD: f32 = 0.5; // Feet
 
 
 pub const MAX_SLOPE: f32 = 1.00;

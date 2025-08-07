@@ -599,7 +599,11 @@ fn get_erruption_elevation(target_elevation: f32) -> f32 {
     erruption_elevation
 }
 
-fn get_perlin_noise(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32 {
+fn get_perlin_noise(perlin: &Perlin, input: f64, period: f64) -> f32 {
+    (perlin.get([input / period]) as f32 + 1.0) / 2.0
+}
+
+fn get_perlin_noise_for_hex(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32 {
     (perlin.get([x * HEX_FACTOR as f64 / period, y / period]) as f32 + 1.0) / 2.0
 }
 
@@ -614,6 +618,7 @@ fn main() {
     let mut rng = rand::thread_rng();
     let perlin = Perlin::new(rng.gen_range(0..u32::MAX));
     let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 4.0;
+    let sea_deviation_for_river_y = (get_perlin_noise(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5) * COAST_WIDTH as f32) as usize;
 
     // Time hex map creation
     let hex_start = Instant::now();
@@ -621,26 +626,28 @@ fn main() {
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
+        let sea_deviation = (get_perlin_noise(&perlin, y as f64, HEIGHT_PIXELS as f64 / 1.5) * COAST_WIDTH as f32) as usize;
 
         for x in 0..WIDTH_HEXAGONS {
             let mut elevation = 0.0;
             let mut distance_from_coast = 0;
+            let adjusted_y = y as f64 + (x % 2) as f64 * 0.5;
 
-            if x < ABYSSAL_PLAINS_WIDTH {
+            if x + sea_deviation < ABYSSAL_PLAINS_WIDTH {
                 elevation = SEA_LEVEL - ABYSSAL_PLAINS_DEPTH;
-            } else if x >= ABYSSAL_PLAINS_WIDTH && x < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
-                elevation = CONTINENTAL_SLOPE_INCREMENT * (x - ABYSSAL_PLAINS_WIDTH) as f32 - ABYSSAL_PLAINS_DEPTH;
-            } else if x < TOTAL_SEA_WIDTH {
-                elevation = (x - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
+            } else if x + sea_deviation >= ABYSSAL_PLAINS_WIDTH && x + sea_deviation < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
+                elevation = CONTINENTAL_SLOPE_INCREMENT * (x + sea_deviation - ABYSSAL_PLAINS_WIDTH) as f32 - ABYSSAL_PLAINS_DEPTH;
+            } else if x + sea_deviation < TOTAL_SEA_WIDTH {
+                elevation = (x + sea_deviation - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
             } else {
-                distance_from_coast = x - TOTAL_SEA_WIDTH;
-                let map_third_noise = get_perlin_noise(&perlin, x as f64, y as f64, HEIGHT_PIXELS as f64 / 3.0);
-                let transition_period_noise = get_perlin_noise(&perlin, x as f64, y as f64, transition_period);
-                let coastal_noise = get_perlin_noise(&perlin, x as f64, y as f64, COAST_WIDTH as f64);
+                distance_from_coast = x + sea_deviation - TOTAL_SEA_WIDTH;
+                let map_third_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, HEIGHT_PIXELS as f64 / 3.0);
+                let transition_period_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, transition_period);
+                let coastal_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, COAST_WIDTH as f64);
                 let perlin_noise = (transition_period_noise + coastal_noise + map_third_noise) / 3.0;
 
                 if y < NORTH_DESERT_HEIGHT {
-                    let factor = (hex_distance_pythagorean(x as i32, y as i32, TOTAL_SEA_WIDTH as i32, RIVER_Y as i32) as f32 / (transition_period as f32)).min(1.0);
+                    let factor = (hex_distance_pythagorean(x as i32 + sea_deviation_for_river_y as i32, y as i32, TOTAL_SEA_WIDTH as i32, RIVER_Y as i32) as f32 / (transition_period as f32)).min(1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     let coast_y = COAST_WIDTH as f32 * HEX_SIZE;
@@ -690,12 +697,12 @@ fn main() {
                 elevation += RING_VALLEY_ELEVATION_BONUS;
             }
             // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
-            if x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
-                elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
+            if x + sea_deviation <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
+                elevation += (get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, 6.0) - 0.5) * RANDOM_ELEVATION_FACTOR * 3.0;
             }
 
             let mut rain_class = 0;
-            if x > TOTAL_SEA_WIDTH && distance_from_coast < COAST_WIDTH {
+            if x + sea_deviation > TOTAL_SEA_WIDTH && distance_from_coast < COAST_WIDTH {
                 rain_class += 1;
             }
             if y > NORTH_DESERT_HEIGHT {
