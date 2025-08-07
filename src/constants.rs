@@ -76,6 +76,8 @@ pub const NE_BASIN_ELEVATION: f32 = 636.0;
 
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 10_131.0;
 pub const CENTRAL_HIGHLAND_INCREMENT: f32 = (CENTRAL_HIGHLAND_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
+// With Perlin noise, actual elevation will likely be lower than this.
+// E.g. 16522.40, 15535.90
 pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
@@ -91,7 +93,7 @@ pub const KC: f32 = 1.0; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
 // Experimentally we have determined that KD = 1.0 / 200_000.0 is way too low.
 // KD = 0.000_087_613_555 would allow 99% of excess sediment to get deposited in one "year".
-pub const KD: f32 = 1.0 / 7.0 * 0.002; // deposition rate fraction
+pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
 
 // TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE basin.
 // 0.01 hours of average flow through the Aswan Dam.

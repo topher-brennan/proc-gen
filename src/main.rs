@@ -10,6 +10,7 @@ mod constants;
 use constants::*;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use noise::{NoiseFn, Perlin};
 
 #[derive(Copy, Clone)]
 struct FloodItem {
@@ -598,6 +599,10 @@ fn get_erruption_elevation(target_elevation: f32) -> f32 {
     erruption_elevation
 }
 
+fn get_perlin_noise(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32 {
+    (perlin.get([x * HEX_FACTOR as f64 / period, y / period]) as f32 + 1.0) / 2.0
+}
+
 fn main() {
     // Allow user to override number of rounds via command-line: first positional arg is rounds, e.g. `cargo run --release -- 2000`
     let rounds: u32 = std::env::args()
@@ -607,6 +612,8 @@ fn main() {
 
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
+    let perlin = Perlin::new(rng.gen_range(0..u32::MAX));
+    let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 4.0;
 
     // Time hex map creation
     let hex_start = Instant::now();
@@ -627,15 +634,24 @@ fn main() {
                 elevation = (x - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
             } else {
                 distance_from_coast = x - TOTAL_SEA_WIDTH;
+                let map_third_noise = get_perlin_noise(&perlin, x as f64, y as f64, HEIGHT_PIXELS as f64 / 3.0);
+                let transition_period_noise = get_perlin_noise(&perlin, x as f64, y as f64, transition_period);
+                let coastal_noise = get_perlin_noise(&perlin, x as f64, y as f64, COAST_WIDTH as f64);
+                let perlin_noise = (transition_period_noise + coastal_noise + map_third_noise) / 3.0;
 
                 if y < NORTH_DESERT_HEIGHT {
-                    elevation = SEA_LEVEL + distance_from_coast as f32 * NORTH_DESERT_INCREMENT + RANDOM_ELEVATION_FACTOR * 2.0;
+                    let factor = (hex_distance_pythagorean(x as i32, y as i32, TOTAL_SEA_WIDTH as i32, RIVER_Y as i32) as f32 / (transition_period as f32)).min(1.0);
+                    elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                    let factor = (y - NORTH_DESERT_HEIGHT) as f32 / CENTRAL_HIGHLAND_HEIGHT as f32;
-                    elevation = SEA_LEVEL + distance_from_coast as f32 * (CENTRAL_HIGHLAND_INCREMENT * factor + NORTH_DESERT_INCREMENT * (1.0 - factor)) + RANDOM_ELEVATION_FACTOR;
+                    let coast_y = COAST_WIDTH as f32 * HEX_SIZE;
+                    let coast_factor = (distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max((coast_y - (NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - y) as f32) as f32 * 2.0 / (COAST_WIDTH as f32 * HEX_SIZE));
+                    let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32).min(coast_factor).min(1.0);
+                    elevation = perlin_noise * ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
                 } else {
-                    let factor = (y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / SOUTH_MOUNTAINS_HEIGHT as f32;
-                    elevation = SEA_LEVEL + distance_from_coast as f32 * (SE_MOUNTAINS_INCREMENT * factor + CENTRAL_HIGHLAND_INCREMENT * (1.0 - factor));
+                    // Should probably be renamed "south mountains"
+                    let coast_factor = distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32;
+                    let factor = ((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(coast_factor).min(1.0);
+                    elevation = perlin_noise * ((SE_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
                 }
             }
 
@@ -652,6 +668,7 @@ fn main() {
             if x == BIG_VOLCANO_X && y == RIVER_Y {
                 // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
                 // usually into a cone.
+                // TODO: Make this an event that happens as rainfall is happening, after enough time that I can pick the spot in the desired area with the most water.
                 elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                 // The northeast basin.
@@ -661,13 +678,6 @@ fn main() {
                     let factor = (distance_from_river_y as f32 / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32)).min(1.0);
                     elevation += RANDOM_ELEVATION_FACTOR * factor;
                 }
-            } else if x > SW_RANGE_X_START && x < SW_RANGE_X_START + SW_RANGE_WIDTH && y >= SW_RANGE_Y_START && y < SW_RANGE_Y_START + SW_RANGE_HEIGHT {
-                // A range on the northern edge of the southern mountains
-                elevation = SW_RANGE_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR;
-                // TODO: This logic is from when the range was extending out beyond the normal coastline, might not keep.
-                if distance_from_coast < COAST_WIDTH {
-                    distance_from_coast = distance_from_coast.max((distance_from_coast + SW_RANGE_WIDTH / 2).min(y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT).min(NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_HEIGHT - y));
-                }
             } else if x == ISLAND_CHAIN_X {
                 // Need to figure out how to do this without causing out-of-control erosion of the sea floor.
                 // if y == FIRST_ISLAND_Y {
@@ -676,11 +686,11 @@ fn main() {
                 //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + SECOND_ISLAND_MAX_ELEVATION);
                 // }
             } else if hex_distance(x as i32, y as i32, RING_VALLEY_X as i32, RING_VALLEY_Y as i32) == RING_VALLEY_RADIUS as i32 {
+                // TODO: Use Pythagorean distance, 8 hex radius, also hill climb to find a local maxima (probably requires moving to post-generation step).
                 elevation += RING_VALLEY_ELEVATION_BONUS;
             }
             // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
-
-            if distance_from_river_y > 0 || x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE - (RANDOM_ELEVATION_FACTOR / NORTH_DESERT_INCREMENT) as usize {
+            if x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
                 elevation += rng.gen_range(0.0..RANDOM_ELEVATION_FACTOR);
             }
 
@@ -699,6 +709,7 @@ fn main() {
                     rain_class = 4;
                     elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
                 } else {
+                    elevation = MAX_ELEVATION;
                     rain_class = -1;
                 }
             }
@@ -714,8 +725,13 @@ fn main() {
                 _ => 0.0,
             };
 
-            // Not sure why I keep needing these little adjustments to avoid magenta
-            elevation = elevation.min(MAX_ELEVATION * 255.0 / 256.0);
+            if distance_from_river_y == 0 {
+                elevation = elevation.min(NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR);
+            } else {
+                // Not sure why I keep needing these little adjustments to avoid magenta
+                elevation = elevation.min(MAX_ELEVATION * 255.0 / 256.0);
+            }
+            
 
             hex_map[y as usize].push(Hex {
                 coordinate: (x, y),
