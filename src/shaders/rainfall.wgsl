@@ -15,6 +15,8 @@ struct Constants {
     hex_count: f32,
     sea_level: f32,
     evaporation_factor: f32,
+    width: f32,
+    basin_x_boundary: f32,
 }
 
 @compute @workgroup_size(256)
@@ -26,7 +28,9 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Only add rainfall to land (elevation >= sea_level)
     if (hex_data[index].elevation >= constants.sea_level) {
-        hex_data[index].water_depth -= constants.evaporation_factor * hex_data[index].water_depth;
+        if (index % u32(constants.width) <= u32(constants.basin_x_boundary)) {
+            hex_data[index].water_depth -= constants.evaporation_factor * hex_data[index].water_depth;
+        }
         hex_data[index].water_depth += hex_data[index].rainfall;
     }
 } 

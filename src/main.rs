@@ -134,22 +134,28 @@ fn hex_distance(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     }
 }
 
-fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
-    let dx = (x2 - x1) as f32 * HEX_FACTOR;
-    let mut dy = (y2 - y1) as f32;
-    if (x2 - x1) % 2 == 1 {
-        if x1 % 2 == 0 {
-            dy += 0.5;
-        } else {
-            dy -= 0.5;
-        }
+fn hex_coordinates_to_cartesian(x: i32, y: i32) -> (f32, f32) {
+    let dx = x as f32 * HEX_FACTOR;
+    let mut dy = y as f32;
+    if x % 2 == 1 {
+        dy += 0.5;
     }
-    return (dx.powi(2) + dy.powi(2)).sqrt() as i32;
+    (dx, dy)
+}
+
+fn cartesian_distance(x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt()
+}
+
+fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> f32 {
+    let (dx, dy) = hex_coordinates_to_cartesian(x1, y1);
+    let (dx2, dy2) = hex_coordinates_to_cartesian(x2, y2);
+    return cartesian_distance(dx, dy, dx2, dy2);
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
     if elevation < SEA_LEVEL {
-        let normalized_elevation = ((elevation + ABYSSAL_PLAINS_DEPTH) / (ABYSSAL_PLAINS_DEPTH)).min(1.0);
+        let normalized_elevation = ((elevation + ABYSSAL_PLAINS_MAX_DEPTH) / (ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
@@ -167,39 +173,39 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
         let max_land_height = MAX_ELEVATION * 256.0 / 255.0;
         let normalized_height = (land_height / max_land_height).min(1.0);
         
-        if normalized_height < 0.2 {
+        if normalized_height < 0.15 {
             // Green to yellow
-            let factor = normalized_height / 0.2;
+            let factor = normalized_height / 0.15;
             let red = (255.0 * factor) as u8;
             let green = 255;
             let blue = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.4 {
+        } else if normalized_height < 0.3 {
             // Yellow (255,255,0) → Orange (255,127,0)
-            let factor = (normalized_height - 0.2) / 0.2; // 0..1
+            let factor = (normalized_height - 0.15) / 0.15; // 0..1
             let red   = 255;
             let green = (127.0 + 128.0 * (1.0 - factor)) as u8; // 255→127
             let blue  = 0;
             Rgb([red, green, blue])
         // TODO: The later stages of this transition don't subjectively look right to me,
         // is there some standard way to do this?
-        } else if normalized_height < 0.6 {
+        } else if normalized_height < 0.5 {
             // Orange (255,127,0) to Red (255,0,0)
-            let factor = (normalized_height - 0.4) / 0.2; // 0..1
+            let factor = (normalized_height - 0.3) / 0.2; // 0..1
             let red = 255;
             let green = (127.0 * (1.0 - factor)) as u8; // 127→0
             let blue = 0;
             Rgb([red, green, blue])
-        } else if normalized_height < 0.8 {
+        } else if normalized_height < 0.7 {
             // Red to brown
-            let factor = (normalized_height - 0.6) / 0.2;
+            let factor = (normalized_height - 0.5) / 0.2;
             let red = 62 + (193.0 * (1.0 - factor)) as u8; // 255→62
             let green = 28 * factor as u8;
             let blue = 0;
             Rgb([red, green, blue])
         } else {
             // Brown to white
-            let factor = (normalized_height - 0.8) / 0.2;
+            let factor = (normalized_height - 0.7) / 0.3;
             let red = 62 + (193.0 * factor) as u8; // 62→255
             let green = 28 + (237.0 * factor) as u8;
             let blue = (255.0 * factor) as u8;
@@ -276,7 +282,8 @@ fn simulate_rainfall(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
     river_y: usize,
-) {
+    river_outlet_x: usize,
+) -> f32 {
     let water_start = Instant::now();
 
     let height = HEIGHT_PIXELS as usize;
@@ -293,6 +300,8 @@ fn simulate_rainfall(
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
 
+    let mut current_sea_level = SEA_LEVEL;
+
     upload_hex_data(hex_map, &gpu_sim);
 
     println!(
@@ -300,12 +309,12 @@ fn simulate_rainfall(
         NORTH_DESERT_WIDTH, NE_BASIN_WIDTH, TOTAL_LAND_WIDTH, TOTAL_SEA_WIDTH, SW_RANGE_WIDTH
     );
     println!(
-        "  NORTH_DESERT_INCREMENT {}  CENTRAL_HIGHLAND_INCREMENT {}  SE_MOUNTAINS_INCREMENT {}  CONTINENTAL_SHELF_INCREMENT {}",
-        NORTH_DESERT_INCREMENT, CENTRAL_HIGHLAND_INCREMENT, SE_MOUNTAINS_INCREMENT, CONTINENTAL_SHELF_INCREMENT
+        "  CONTINENTAL_SHELF_INCREMENT {}  CONTINENTAL_SLOPE_INCREMENT {}  ABYSSAL_PLAINS_INCREMENT {}",
+        CONTINENTAL_SHELF_INCREMENT, CONTINENTAL_SLOPE_INCREMENT, ABYSSAL_PLAINS_INCREMENT
     );
     println!(
-        "  SEA_LEVEL {}  NORTH_DESERT_HEIGHT {}  CENTRAL_HIGHLAND_HEIGHT {}  SOUTH_MOUNTAINS_HEIGHT {}  CONTINENTAL_SLOPE_INCREMENT {}",
-        SEA_LEVEL, NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT, CONTINENTAL_SLOPE_INCREMENT
+        "  SEA_LEVEL {}  NORTH_DESERT_HEIGHT {}  CENTRAL_HIGHLAND_HEIGHT {}  SOUTH_MOUNTAINS_HEIGHT {}",
+        SEA_LEVEL, NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT
     );
     println!(
         "  RAINFALL_FACTOR {}  EVAPORATION_FACTOR {}",
@@ -313,9 +322,10 @@ fn simulate_rainfall(
         EVAPORATION_FACTOR
     );
     println!(
-        "  RIVER_SOURCE_X {}  RIVER_Y {}",
+        "  RIVER_Y {}  RIVER_SOURCE_X {}  RIVER_OUTLET_X {}",
+        RIVER_Y,
         RIVER_SOURCE_X,
-        RIVER_Y
+        river_outlet_x
     );
 
     for _step in 0..steps {
@@ -324,7 +334,7 @@ fn simulate_rainfall(
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
 
-        if _step % ((WIDTH_HEXAGONS / 4) as u32 * LOG_ROUNDS) == 0 {
+        if _step % (WIDTH_HEXAGONS as u32 * LOG_ROUNDS) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -387,6 +397,15 @@ fn simulate_rainfall(
             let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
 
             let source_hex = &hex_map[RIVER_Y][RIVER_SOURCE_X];
+            let outlet_hex = &hex_map[RIVER_Y][river_outlet_x];
+            let target_delta_hex = &hex_map[RIVER_Y][river_outlet_x - 231];
+
+            // The more the hex we want to be the edge of the delta is dry, the more we want
+            // we want to bring the sea level up to match.
+            // TODO: Is there an inexpensive way to download this every step?
+            // if target_delta_hex.elevation - target_delta_hex.water_depth > current_sea_level {
+            //     current_sea_level = target_delta_hex.elevation - target_delta_hex.water_depth;
+            // }
 
             let round = _step / (WIDTH_HEXAGONS as u32);
 
@@ -394,6 +413,9 @@ fn simulate_rainfall(
                 let mut row_min = f32::INFINITY;
                 let mut row_max = f32::NEG_INFINITY;
                 for h in row {
+                    if h.coordinate.0 > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                        continue;
+                    }
                     if h.elevation < row_min {
                         row_min = h.elevation;
                     }
@@ -407,7 +429,7 @@ fn simulate_rainfall(
             });
 
             println!(
-                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  westernmost land X {}",
+                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  outlet elevation {:.2} ft  target delta elevation {:.2} ft  westernmost land X {}",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
                 water_on_land,
@@ -416,17 +438,21 @@ fn simulate_rainfall(
                 wet_cells,
                 wet_cells_percentage,
                 source_hex.elevation,
+                outlet_hex.elevation,
+                target_delta_hex.elevation,
                 westernmost_land_hex.map_or(0, |h| h.coordinate.0),
             );
             println!("  min elevation: {:.2} ft  max elevation: {:.2} ft  time: {:?}", min_elevation, max_elevation, water_start.elapsed());
 
             let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
-            render_frame(hex_map, &mut frame_buffer);
+            render_frame(hex_map, &mut frame_buffer, current_sea_level, true);
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-            save_png("terrain.png", hex_map);
+
+            render_frame(hex_map, &mut frame_buffer, current_sea_level, false);
+            save_buffer_png("terrain.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
         }
 
-        gpu_sim.run_rainfall_step(width * height);
+        gpu_sim.run_rainfall_step(width * height, current_sea_level);
 
         // TODO: Possible to get water / sediment inflow from GPU for diagnostic purposes?
         // If we don't delete this entirely.
@@ -439,7 +465,7 @@ fn simulate_rainfall(
 
         // TODO: Similar to the river source updater, is it possible to get water / sediment outflows
         // from GPU for diagnostic purposes?
-        gpu_sim.run_ocean_boundary(width, height, SEA_LEVEL);
+        gpu_sim.run_ocean_boundary(width, height, current_sea_level);
 
         // GPU min-slope + erosion/deposition passes
         gpu_sim.run_min_neigh_step(width, height);
@@ -452,14 +478,14 @@ fn simulate_rainfall(
 
     let water_remaining: f32 = hex_map
         .iter()
-        .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
+        .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
         .map(|h| h.water_depth)
         .sum();
 
     let water_remaining_north: f32 = hex_map
         .iter()
         .take(NORTH_DESERT_HEIGHT)
-        .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
+        .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
         .map(|h| h.water_depth)
         .sum();
 
@@ -474,11 +500,11 @@ fn simulate_rainfall(
         .iter()
         .skip(NORTH_DESERT_HEIGHT)
         .take(CENTRAL_HIGHLAND_HEIGHT)
-        .flat_map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL))
+        .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
         .map(|h| h.water_depth)
         .sum();
 
-    // Experimenting with h.elevation > SEA_LEVEL or h.water_depth <= WATER_THRESHOLD.
+    // Experimenting with h.elevation > current_sea_level or h.water_depth <= WATER_THRESHOLD.
     let westernmost_land_hex = hex_map.par_iter().map(|row| {
         row.iter().filter(|h| h.water_depth <= WATER_THRESHOLD).min_by_key(|h| h.coordinate.0)
     }).flatten().min_by_key(|h| h.coordinate.0);
@@ -512,6 +538,8 @@ fn simulate_rainfall(
         total_sediment_in,
         total_sediment_out
     );
+
+    current_sea_level
 }
 
 fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
@@ -524,10 +552,10 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
         let y = (idx as u32) / width;
         img.put_pixel(x, y, Rgb([r, g, b]));
     }
-    let _ = img.save(path);
+    img.save(path).expect("Failed to save image");
 }
 
-fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>) {
+fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) {
     // Create the visualization image
     let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
     
@@ -547,7 +575,7 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>) {
             let elevation = hex_map[hex_y as usize][hex_x as usize].elevation;
             
             // Convert elevation to color
-            let color = elevation_to_color(elevation);
+            let color = elevation_to_color(elevation - sea_level);
             
             // Set the pixel
             img.put_pixel(x as u32, y as u32, color);
@@ -558,7 +586,7 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>) {
 }
 
 // Renders current hex_map state into an RGB buffer (u32 per pixel)
-fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32]) {
+fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], sea_level: f32, show_water: bool) {
     for y in 0..HEIGHT_PIXELS {
         for x in 0..WIDTH_PIXELS {
             let hex_x = ((x as f32) / HEX_FACTOR) as usize;
@@ -569,14 +597,14 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32]) {
 
             let hex = &hex_map[hex_y as usize][hex_x as usize];
             // Choose colour – highlight water depth strongly so it stands out
-            let color = if hex.water_depth > WATER_THRESHOLD {
+            let color = if show_water && hex.water_depth > WATER_THRESHOLD {
                 // Strong blue for water for debugging
                 let blue = 255u8;
                 let g = 0u8;
                 let r = 0u8;
                 (r as u32) << 16 | (g as u32) << 8 | (blue as u32)
             } else {
-                let Rgb([r, g, b]) = elevation_to_color(hex.elevation);
+                let Rgb([r, g, b]) = elevation_to_color(hex.elevation - sea_level);
                 let r = (r as f32 * 0.4) as u8;
                 let g = (g as f32 * 0.4) as u8;
                 let b = (b as f32 * 0.4) as u8;
@@ -607,6 +635,10 @@ fn get_perlin_noise_for_hex(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32
     (perlin.get([x * HEX_FACTOR as f64 / period, y / period]) as f32 + 1.0) / 2.0
 }
 
+fn get_sea_deviation(perlin: &Perlin, y: f64, period: f64) -> usize {
+    ((get_perlin_noise(perlin, y, period) - 0.5) * COAST_WIDTH as f32) as usize
+}
+
 fn main() {
     // Allow user to override number of rounds via command-line: first positional arg is rounds, e.g. `cargo run --release -- 2000`
     let rounds: u32 = std::env::args()
@@ -617,8 +649,10 @@ fn main() {
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
     let perlin = Perlin::new(rng.gen_range(0..u32::MAX));
+    // Two degrees latitude, in half-mile hexes.
     let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 4.0;
-    let sea_deviation_for_river_y = (get_perlin_noise(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5) * COAST_WIDTH as f32) as usize;
+    let sea_deviation_for_river_y = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+    let river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y;
 
     // Time hex map creation
     let hex_start = Instant::now();
@@ -626,7 +660,7 @@ fn main() {
     for y in 0..HEIGHT_PIXELS {
         hex_map.push(Vec::new());
         let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
-        let sea_deviation = (get_perlin_noise(&perlin, y as f64, HEIGHT_PIXELS as f64 / 1.5) * COAST_WIDTH as f32) as usize;
+        let sea_deviation = get_sea_deviation(&perlin, y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
         for x in 0..WIDTH_HEXAGONS {
             let mut elevation = 0.0;
@@ -634,9 +668,9 @@ fn main() {
             let adjusted_y = y as f64 + (x % 2) as f64 * 0.5;
 
             if x + sea_deviation < ABYSSAL_PLAINS_WIDTH {
-                elevation = SEA_LEVEL - ABYSSAL_PLAINS_DEPTH;
+                elevation = -1.0 * ABYSSAL_PLAINS_MIN_DEPTH - (ABYSSAL_PLAINS_WIDTH - (x + sea_deviation)) as f32 * ABYSSAL_PLAINS_INCREMENT;
             } else if x + sea_deviation >= ABYSSAL_PLAINS_WIDTH && x + sea_deviation < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
-                elevation = CONTINENTAL_SLOPE_INCREMENT * (x + sea_deviation - ABYSSAL_PLAINS_WIDTH) as f32 - ABYSSAL_PLAINS_DEPTH;
+                elevation = (x + sea_deviation - ABYSSAL_PLAINS_WIDTH) as f32 * CONTINENTAL_SLOPE_INCREMENT - ABYSSAL_PLAINS_MIN_DEPTH;
             } else if x + sea_deviation < TOTAL_SEA_WIDTH {
                 elevation = (x + sea_deviation - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
             } else {
@@ -644,16 +678,33 @@ fn main() {
                 let map_third_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, HEIGHT_PIXELS as f64 / 3.0);
                 let transition_period_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, transition_period);
                 let coastal_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, COAST_WIDTH as f64);
-                let perlin_noise = (transition_period_noise + coastal_noise + map_third_noise) / 3.0;
+                let perlin_noise = ((transition_period_noise + coastal_noise + map_third_noise) / 3.0).powf(3.0_f32.log2());
 
-                if y < NORTH_DESERT_HEIGHT {
-                    let factor = (hex_distance_pythagorean(x as i32 + sea_deviation_for_river_y as i32, y as i32, TOTAL_SEA_WIDTH as i32, RIVER_Y as i32) as f32 / (transition_period as f32)).min(1.0);
+                if y < NORTH_DESERT_HEIGHT - (transition_period * 2.0) as usize {
+                    // This is to prevent the river outlet from being too far north.
+                    // TODO: Maybe fade this out once we get very far north?
+                    // let coast_factor = (1.0 - distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max(0.0);
+                    let factor = ((NORTH_DESERT_HEIGHT - (transition_period * 2.0) as usize - y) as f32 / (transition_period as f32)).min(1.0);
+                    elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION + (1.0 - perlin_noise) * NORTH_DESERT_MAX_ELEVATION * factor * 0.25;
+                } else if y < NORTH_DESERT_HEIGHT {
+                    let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, y as i32);
+                    let (cx2, cy2) = hex_coordinates_to_cartesian(TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32, RIVER_Y as i32);
+                    // Area is oval-shaped, not circular, with the longer axis running east-west.
+                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2) / (transition_period as f32 / 2.0)).min(1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
+                    // TODO: Similar to making sure the river isn't too far north, we should take steps to make sure the delta isn't too far south.
                     let coast_y = COAST_WIDTH as f32 * HEX_SIZE;
                     let coast_factor = (distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max((coast_y - (NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - y) as f32) as f32 * 2.0 / (COAST_WIDTH as f32 * HEX_SIZE));
-                    let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32).min(coast_factor).min(1.0);
-                    elevation = perlin_noise * ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
+                    // Faster transition because it's a less dramatic change.
+                    let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(coast_factor).min(1.0);
+                    let max_elevation = ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
+                    elevation = perlin_noise * max_elevation;
+
+                    if y < NORTH_DESERT_HEIGHT + (transition_period * 2.0) as usize {
+                        let secondary_factor = ((NORTH_DESERT_HEIGHT as f32 + transition_period as f32 - y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
+                        elevation += (1.0 - perlin_noise) * (max_elevation / 6.0) * (1.0 - secondary_factor);
+                    }
                 } else {
                     // Should probably be renamed "south mountains"
                     let coast_factor = distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32;
@@ -714,8 +765,11 @@ fn main() {
             if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                 if y <= NE_BASIN_HEIGHT {
                     rain_class = 4;
-                    elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
+                    if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH + NE_BASIN_FRINGE {
+                        elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
+                    }
                 } else {
+                    // Set lower so we can see the actual maximum elevation generated by the Perlin noise.
                     elevation = MAX_ELEVATION;
                     rain_class = -1;
                 }
@@ -756,10 +810,10 @@ fn main() {
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
-    // Maybe KC should be around 0.00574 to harmonize these?
     let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
-    simulate_rainfall(&mut hex_map, total_steps, RIVER_Y);
+    let final_sea_level = simulate_rainfall(&mut hex_map, total_steps, RIVER_Y, river_outlet_x);
 
+    // TODO: This isn't working, should fix.
     // Count final blue pixels for quick sanity check
     let final_blue = frame_buffer
         .iter()
@@ -772,9 +826,11 @@ fn main() {
 
     // Time PNG conversion
     let png_start = Instant::now();
-    render_frame(&mut hex_map, &mut frame_buffer);
+    render_frame(&mut hex_map, &mut frame_buffer, final_sea_level, true);
     save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
-    save_png("terrain.png", &hex_map);
+
+    render_frame(&mut hex_map, &mut frame_buffer, final_sea_level, false);
+    save_buffer_png("terrain.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
     let save_duration = png_start.elapsed();
     println!("Image rendering and saving took: {:?}", save_duration);

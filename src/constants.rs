@@ -22,7 +22,9 @@ pub const HIGH_RAIN: f32 = 34.0;
 pub const VERY_HIGH_RAIN: f32 = 49.0;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const RAINFALL_FACTOR: f32 = 1.0 / 12.0 / 365.0 / 24.0 / 6.0;
-// The 16.0 multiple comes from very dubiously realistic back-of-the-envelope math.
+// Some dubiously realistic back-of-the-envelope math suggests maybe I should use 16.0 here,
+// but maybe I forgot a unit conversion? A multipler of about 500x is the absolute limit
+// before too little water from the main river will reach the sea.
 pub const EVAPORATION_FACTOR: f32 = RAINFALL_FACTOR * 16.0;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
@@ -46,38 +48,36 @@ pub const NE_BASIN_FRINGE: usize = 4;
 pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN) * NORTH_DESERT_HEIGHT as f32;
 // Rain on the part of the central highland whose east-west extent corresponds to the north desert.
 pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * LOW_RAIN) * CENTRAL_HIGHLAND_HEIGHT as f32;
-// Measured in previous simulation run.
-pub const NE_BASIN_WATER_STORED: f32 = 71_552.47;
 // An attempt to balance water in north and central regions mathematically.
-pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN + NE_BASIN_WATER_STORED * EVAPORATION_FACTOR / RAINFALL_FACTOR - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
+pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
-// In real life, continental shelves can extend up to 310 miles from shore.
+// In real life, continental shelves can extend as little as 50 miles or as much as 310 miles from shore.
 pub const CONTINENTAL_SHELF_WIDTH: usize = (150.0 * 2.0 / HEX_FACTOR) as usize;
-pub const CONTINENTAL_SHELF_MIN_WIDTH: usize = (50.0 * 2.0 / HEX_FACTOR) as usize;
 pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
 pub const CONTINENTAL_SHELF_INCREMENT: f32 = CONTINENTAL_SHELF_DEPTH / CONTINENTAL_SHELF_WIDTH as f32;
 pub const CONTINENTAL_SLOPE_GRADE: f32 = 0.05; // About 3 degrees.
 pub const CONTINENTAL_SLOPE_INCREMENT: f32 = CONTINENTAL_SLOPE_GRADE * HEX_SIZE * HEX_FACTOR;
-pub const ABYSSAL_PLAINS_DEPTH: f32 = 10_000.0;
-pub const CONTINENTAL_SLOPE_WIDTH: usize = ((ABYSSAL_PLAINS_DEPTH - CONTINENTAL_SHELF_DEPTH) / CONTINENTAL_SLOPE_INCREMENT) as usize;
+pub const ABYSSAL_PLAINS_MIN_DEPTH: f32 = 10_000.0;
+pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = 15_000.0;
+pub const CONTINENTAL_SLOPE_WIDTH: usize = ((ABYSSAL_PLAINS_MIN_DEPTH - CONTINENTAL_SHELF_DEPTH) / CONTINENTAL_SLOPE_INCREMENT) as usize;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const RIVER_SOURCE_X: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE + 1;
 pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDTH - CONTINENTAL_SLOPE_WIDTH;
-// pub const SEA_LEVEL: f32 = (CONTINENTAL_SLOPE_WIDTH as f32) * CONTINENTAL_SLOPE_INCREMENT + CONTINENTAL_SHELF_DEPTH;
+pub const ABYSSAL_PLAINS_INCREMENT: f32 = (ABYSSAL_PLAINS_MAX_DEPTH - ABYSSAL_PLAINS_MIN_DEPTH) / ABYSSAL_PLAINS_WIDTH as f32;
 pub const SEA_LEVEL: f32 = 0.0;
 
 // TODO: Might want to use a smaller value for the northern "bumper".
 pub const BUMPER_MAX_ELEVATION: f32 = HEX_SIZE / 3.0;
 pub const BUMPER_RANGE: usize = 120;
 
-pub const NORTH_DESERT_MAX_ELEVATION: f32 = 7_175.0;
+pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
 pub const NORTH_DESERT_INCREMENT: f32 = (NORTH_DESERT_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / (NORTH_DESERT_WIDTH - NE_BASIN_FRINGE) as f32;
 pub const NE_BASIN_ELEVATION: f32 = 636.0;
 
-pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 10_131.0;
+pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
 pub const CENTRAL_HIGHLAND_INCREMENT: f32 = (CENTRAL_HIGHLAND_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
 // With Perlin noise, actual elevation will likely be lower than this.
-pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 18_510.0;
+pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
 pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
 pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
 // TODO: Get rid of this when I'm sure I don't need it.
@@ -87,12 +87,11 @@ pub const SW_RANGE_X_START: usize = TOTAL_SEA_WIDTH as usize;
 pub const SW_RANGE_Y_START: usize = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_FRINGE * 4;
 pub const SW_RANGE_WIDTH: usize = NORTH_DESERT_WIDTH;
 
-
-pub const KC: f32 = 1.0; // capacity coefficient
-pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
-// Experimentally we have determined that KD = 1.0 / 200_000.0 is way too low.
-// KD = 0.000_087_613_555 would allow 99% of excess sediment to get deposited in one "year".
-pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
+pub const KC: f32 = 1.5; // capacity coefficient
+pub const KE: f32 = 0.15; // erosion rate fraction
+// TODO: experimentally still get the weird little pits in lakes at 0.05
+// got reduced number of weird little pits at 0.02, let's try 0.01
+pub const KD: f32 = 0.01; // deposition rate fraction
 
 // TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE basin.
 // 0.01 hours of average flow through the Aswan Dam.
@@ -102,15 +101,15 @@ pub const TARGET_DROP_PER_HEX: f32 = 0.4; // Feet
 pub const TARGET_RIVER_DEPTH: f32 = 32.0; // Feet
 pub const FLOW_FACTOR: f32 = 0.90;
 // Might take 7k-10k rounds to carve out the river valley I want.
-pub const DEFAULT_ROUNDS: u32 = 1_000;
-pub const WATER_THRESHOLD: f32 = 0.5; // Feet
+pub const DEFAULT_ROUNDS: u32 = 4_800;
+pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
 
 
 pub const MAX_SLOPE: f32 = 1.00;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
-pub const LOG_ROUNDS: u32 = 1;
+pub const LOG_ROUNDS: u32 = 100;
 
 pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
 pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;

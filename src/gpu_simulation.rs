@@ -378,7 +378,7 @@ impl GpuSimulation {
         // Constants buffer (rain_per_step, hex_count) – rainfall shader
         let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Constants Buffer"),
-            size: std::mem::size_of::<[f32; 3]>() as u64, // Changed from [f32; 1] to [f32; 2]
+            size: std::mem::size_of::<[f32; 5]>() as u64, // Changed from [f32; 1] to [f32; 2]
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -971,9 +971,9 @@ impl GpuSimulation {
     }
 
     /// Adds uniform rainfall to every cell using a compute shader.
-    pub fn run_rainfall_step(&mut self, total_cells: usize) {
+    pub fn run_rainfall_step(&mut self, total_cells: usize, sea_level: f32) {
         // Update constants buffer with hex_count and sea_level
-        let constants = [total_cells as f32, SEA_LEVEL, EVAPORATION_FACTOR];
+        let constants = [total_cells as f32, sea_level, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32];
         self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&constants));
 
         // Determine dispatch size (workgroup_size = 256)
@@ -1167,7 +1167,7 @@ impl GpuSimulation {
     /// This is significantly faster and should be used in the tight simulation loop.
     pub fn run_ocean_boundary(&mut self, width: usize, height: usize, sea_level: f32) {
         // Update params buffer: [sea_level, height, width, pad]
-        let params = [sea_level, height as f32, width as f32, 0.0f32];
+        let params = [sea_level, height as f32, width as f32, ABYSSAL_PLAINS_MAX_DEPTH];
         self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&params));
 
         // Dispatch compute – one thread per row along west edge
@@ -1188,7 +1188,7 @@ impl GpuSimulation {
     /// Legacy helper that also downloads per-row outflow totals. Use only for debugging/profiling.
     pub fn run_ocean_boundary_readback(&mut self, width: usize, height: usize, sea_level: f32) -> (f32, f32) {
         // Update params buffer: [sea_level, height, width, pad]
-        let params = [sea_level, height as f32, width as f32, 0.0f32];
+        let params = [sea_level, height as f32, width as f32, ABYSSAL_PLAINS_MAX_DEPTH];
         self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&params));
 
         // Dispatch compute – one thread per row along west edge
