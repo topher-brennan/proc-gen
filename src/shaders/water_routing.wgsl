@@ -2,7 +2,7 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _padding: f32,
+    rainfall: f32,
 }
 
 @group(0) @binding(0)
@@ -20,6 +20,9 @@ var<storage, read_write> tgt_buffer: array<u32>;
 struct Constants {
     width: f32,
     height: f32,
+    sea_level: f32,
+    evaporation_factor: f32,
+    basin_x_boundary: f32,
     flow_factor: f32,
     max_flow: f32,
 }
@@ -75,6 +78,15 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = i32(index % width);
     let y = i32(index / width);
     
+    // Rainfall sub-step
+    // Only add rainfall to land (elevation >= sea_level)
+    if (hex_data[index].elevation >= constants.sea_level) {
+        if (x <= i32(constants.basin_x_boundary)) {
+            hex_data[index].water_depth -= constants.evaporation_factor * hex_data[index].water_depth;
+        }
+        hex_data[index].water_depth += hex_data[index].rainfall;
+    }
+
     let hex = hex_data[index];
     let f = total_fluid(hex);
     

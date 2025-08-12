@@ -406,7 +406,7 @@ impl GpuSimulation {
 
         let routing_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Routing Constants Buffer"),
-            size: std::mem::size_of::<[f32;4]>() as u64,
+            size: std::mem::size_of::<[f32;7]>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -981,7 +981,8 @@ impl GpuSimulation {
 
     /// Run water routing kernel and leave results in next buffers. Optionally download.
     pub fn run_water_routing_step(&mut self, width: usize, height: usize, flow_factor: f32, max_flow: f32) {
-        let consts = [width as f32, height as f32, flow_factor, max_flow];
+        let basin_x_boundary = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+        let consts = [width as f32, height as f32, SEA_LEVEL, EVAPORATION_FACTOR, basin_x_boundary as f32, flow_factor, max_flow];
         self.queue.write_buffer(&self.routing_constants_buffer, 0, bytemuck::cast_slice(&consts));
 
         let workgroup_size: u32 = 256;
