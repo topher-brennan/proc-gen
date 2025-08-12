@@ -437,8 +437,7 @@ fn simulate_rainfall(
             save_buffer_png("terrain.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
         }
 
-        // Delete this line after finishing consolidations of gpu steps.
-        // gpu_sim.run_rainfall_step(width * height, current_sea_level);
+        gpu_sim.run_rainfall_step(width * height, current_sea_level);
 
         // GPU water routing
         gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
@@ -662,6 +661,8 @@ fn main() {
 
                 if y < RIVER_Y - (transition_period) as usize {
                     // This is to prevent the river outlet from being too far north.
+                    // TODO: Maybe fade this out once we get very far north?
+                    // let coast_factor = (1.0 - distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max(0.0);
                     let factor = ((RIVER_Y as f32 - transition_period as f32 * 2.0 - y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION + (1.0 - perlin_noise) * NORTH_DESERT_MAX_ELEVATION * (1.0 - factor) * 0.25;
                 } else if y < NORTH_DESERT_HEIGHT {
@@ -672,7 +673,7 @@ fn main() {
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     // Similar to making sure the river isn't too far north, we should take steps to make sure the delta isn't too far south.
-                    // Faster transition because it's a less dramatic change, hence the * 2.0.
+                    // Faster transition because it's a less dramatic change.
                     let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(1.0);
                     let max_elevation = (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION;
                     elevation = perlin_noise * max_elevation;
@@ -682,14 +683,23 @@ fn main() {
                         elevation += (1.0 - perlin_noise) * (max_elevation / 6.0) * (1.0 - secondary_factor);
                     }
                 } else {
+                    // Should probably be renamed "south mountains"
+                    // let coast_factor = distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32;
                     let factor = ((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(1.0);
                     elevation = perlin_noise * ((SOUTH_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
                 }
                 elevation = elevation.min(distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32 * SOUTH_MOUNTAINS_MAX_ELEVATION);
             }
 
-            // TODO: More realistic seafloor depth
+            // let mut bumper_factor = 0.0;
+            // if y > NORTH_DESERT_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + BUMPER_RANGE {
+            //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
+            // } else if y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + BUMPER_RANGE {
+            //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32 - CENTRAL_HIGHLAND_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
+            // }
+            // elevation += BUMPER_MAX_ELEVATION * bumper_factor * (distance_from_coast as f32 / (TOTAL_LAND_WIDTH as f32));
 
+            // TODO: More realistic seafloor depth, and fix islands.
             // Special features:
             if x == BIG_VOLCANO_X && y == RIVER_Y {
                 // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
@@ -706,8 +716,15 @@ fn main() {
                     let factor = (distance_from_river_y as f32 / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32)).min(1.0);
                     elevation += RANDOM_ELEVATION_FACTOR * factor;
                 }
+            // } else if x == ISLAND_CHAIN_X {
+                // Need to figure out how to do this without causing out-of-control erosion of the sea floor.
+                // if y == FIRST_ISLAND_Y {
+                //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + FIRST_ISLAND_MAX_ELEVATION);
+                // } else if y == SECOND_ISLAND_Y {
+                //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + SECOND_ISLAND_MAX_ELEVATION);
+                // }
             }
-            // TODO: Island chain 500 miles from the coast.
+            // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
             if x + sea_deviation <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
                 elevation += (get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, 6.0) - 0.5) * RANDOM_ELEVATION_FACTOR * 3.0;
             }
