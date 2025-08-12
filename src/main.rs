@@ -71,21 +71,6 @@ fn prefill_basins(hex_map: &mut Vec<Vec<Hex>>) {
     }
 }
 
-// Helper macro to detect NaN / Inf as early as possible and crash with context.
-// I've been using step -1 to indicate that the value is not associated with a step,
-// or the step is not known.
-macro_rules! ensure_finite {
-    ($val:expr, $label:expr, $x:expr, $y:expr, $step:expr) => {
-        if !$val.is_finite() {
-            panic!(
-                "Detected non-finite value for {} at cell ({}, {}) on step {}: {}",
-                $label, $x, $y, $step, $val
-            );
-        }
-    };
-}
-use ensure_finite;
-
 // -----------------------------------------------------------------------------
 // Neighbour offsets for axial "columns-lined" hex layout
 // -----------------------------------------------------------------------------
@@ -281,7 +266,6 @@ fn fill_sea(hex_map: &mut Vec<Vec<Hex>>) {
 fn simulate_rainfall(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
-    river_y: usize,
     river_outlet_x: usize,
 ) -> f32 {
     let water_start = Instant::now();
@@ -296,6 +280,7 @@ fn simulate_rainfall(
     gpu_sim.initialize_buffer(width, height);
     gpu_sim.resize_min_buffers(width, height);
 
+    // TODO: Get these working again.
     let mut total_outflow = 0.0f32;
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
@@ -305,8 +290,8 @@ fn simulate_rainfall(
     upload_hex_data(hex_map, &gpu_sim);
 
     println!(
-        "Calculated constants: NORTH_DESERT_WIDTH {}  NE_BASIN_WIDTH {}  TOTAL_LAND_WIDTH {}  TOTAL_SEA_WIDTH {}  SW_RANGE_WIDTH {}",
-        NORTH_DESERT_WIDTH, NE_BASIN_WIDTH, TOTAL_LAND_WIDTH, TOTAL_SEA_WIDTH, SW_RANGE_WIDTH
+        "Calculated constants: NORTH_DESERT_WIDTH {}  NE_BASIN_WIDTH {}  TOTAL_LAND_WIDTH {}  TOTAL_SEA_WIDTH {}",
+        NORTH_DESERT_WIDTH, NE_BASIN_WIDTH, TOTAL_LAND_WIDTH, TOTAL_SEA_WIDTH
     );
     println!(
         "  CONTINENTAL_SHELF_INCREMENT {}  CONTINENTAL_SLOPE_INCREMENT {}  ABYSSAL_PLAINS_INCREMENT {}",
@@ -453,11 +438,6 @@ fn simulate_rainfall(
         }
 
         gpu_sim.run_rainfall_step(width * height, current_sea_level);
-
-        // TODO: Possible to get water / sediment inflow from GPU for diagnostic purposes?
-        // If we don't delete this entirely.
-        // let source_idx = (river_y * width + (width - 1)) as u32;
-        // gpu_sim.run_river_source_update(source_idx);
 
         // GPU water routing
         gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
@@ -649,8 +629,7 @@ fn main() {
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
     let perlin = Perlin::new(rng.gen_range(0..u32::MAX));
-    // Two degrees latitude, in half-mile hexes.
-    let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 4.0;
+    let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
     let sea_deviation_for_river_y = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
     let river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y;
 
@@ -680,25 +659,23 @@ fn main() {
                 let coastal_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, COAST_WIDTH as f64);
                 let perlin_noise = ((transition_period_noise + coastal_noise + map_third_noise) / 3.0).powf(3.0_f32.log2());
 
-                if y < NORTH_DESERT_HEIGHT - (transition_period * 2.0) as usize {
+                if y < RIVER_Y - (transition_period) as usize {
                     // This is to prevent the river outlet from being too far north.
                     // TODO: Maybe fade this out once we get very far north?
                     // let coast_factor = (1.0 - distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max(0.0);
-                    let factor = ((NORTH_DESERT_HEIGHT - (transition_period * 2.0) as usize - y) as f32 / (transition_period as f32)).min(1.0);
-                    elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION + (1.0 - perlin_noise) * NORTH_DESERT_MAX_ELEVATION * factor * 0.25;
+                    let factor = ((RIVER_Y as f32 - transition_period as f32 * 2.0 - y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
+                    elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION + (1.0 - perlin_noise) * NORTH_DESERT_MAX_ELEVATION * (1.0 - factor) * 0.25;
                 } else if y < NORTH_DESERT_HEIGHT {
                     let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, y as i32);
                     let (cx2, cy2) = hex_coordinates_to_cartesian(TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32, RIVER_Y as i32);
                     // Area is oval-shaped, not circular, with the longer axis running east-west.
-                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2) / (transition_period as f32 / 2.0)).min(1.0);
+                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 5.0, cy2) / (transition_period as f32 / 2.0)).min(1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                    // TODO: Similar to making sure the river isn't too far north, we should take steps to make sure the delta isn't too far south.
-                    let coast_y = COAST_WIDTH as f32 * HEX_SIZE;
-                    let coast_factor = (distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max((coast_y - (NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - y) as f32) as f32 * 2.0 / (COAST_WIDTH as f32 * HEX_SIZE));
+                    // Similar to making sure the river isn't too far north, we should take steps to make sure the delta isn't too far south.
                     // Faster transition because it's a less dramatic change.
-                    let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(coast_factor).min(1.0);
-                    let max_elevation = ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
+                    let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(1.0);
+                    let max_elevation = (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION;
                     elevation = perlin_noise * max_elevation;
 
                     if y < NORTH_DESERT_HEIGHT + (transition_period * 2.0) as usize {
@@ -707,10 +684,11 @@ fn main() {
                     }
                 } else {
                     // Should probably be renamed "south mountains"
-                    let coast_factor = distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32;
-                    let factor = ((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(coast_factor).min(1.0);
-                    elevation = perlin_noise * ((SE_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
+                    // let coast_factor = distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32;
+                    let factor = ((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(1.0);
+                    elevation = perlin_noise * ((SOUTH_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
                 }
+                elevation = elevation.min(distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32 * SOUTH_MOUNTAINS_MAX_ELEVATION);
             }
 
             // let mut bumper_factor = 0.0;
@@ -726,8 +704,10 @@ fn main() {
             if x == BIG_VOLCANO_X && y == RIVER_Y {
                 // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
                 // usually into a cone.
-                // TODO: Make this an event that happens as rainfall is happening, after enough time that I can pick the spot in the desired area with the most water.
-                elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
+                // TODO: Make this an event that happens as rainfall is happening, after enough time that I can pick an interesting spot, e.g.
+                // daming the main river, or preventing flow from central area into the north.
+                // Also want more realistic slope, 30-35 degrees.
+                // elevation += get_erruption_elevation(HEX_SIZE * 5.0);   
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                 // The northeast basin.
                 // TODO: Refactor this so I'm not doing the goofy thing in the rainfall step.
@@ -736,16 +716,13 @@ fn main() {
                     let factor = (distance_from_river_y as f32 / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32)).min(1.0);
                     elevation += RANDOM_ELEVATION_FACTOR * factor;
                 }
-            } else if x == ISLAND_CHAIN_X {
+            // } else if x == ISLAND_CHAIN_X {
                 // Need to figure out how to do this without causing out-of-control erosion of the sea floor.
                 // if y == FIRST_ISLAND_Y {
                 //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + FIRST_ISLAND_MAX_ELEVATION);
                 // } else if y == SECOND_ISLAND_Y {
                 //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + SECOND_ISLAND_MAX_ELEVATION);
                 // }
-            } else if hex_distance(x as i32, y as i32, RING_VALLEY_X as i32, RING_VALLEY_Y as i32) == RING_VALLEY_RADIUS as i32 {
-                // TODO: Use Pythagorean distance, 8 hex radius, also hill climb to find a local maxima (probably requires moving to post-generation step).
-                elevation += RING_VALLEY_ELEVATION_BONUS;
             }
             // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
             if x + sea_deviation <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
@@ -811,7 +788,7 @@ fn main() {
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
     let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
-    let final_sea_level = simulate_rainfall(&mut hex_map, total_steps, RIVER_Y, river_outlet_x);
+    let final_sea_level = simulate_rainfall(&mut hex_map, total_steps, river_outlet_x);
 
     // TODO: This isn't working, should fix.
     // Count final blue pixels for quick sanity check

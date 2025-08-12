@@ -4,6 +4,7 @@ pub const HEX_SIZE: f32 = ONE_MILE / 2.0;
 pub const RANDOM_ELEVATION_FACTOR: f32 = HEX_SIZE * 0.01;
 // sqrt(3) / 2
 pub const HEX_FACTOR: f32 = 0.86602540378;
+// TODO: Are there any places this would be useful?
 pub const HEX_WIDTH: f32 = HEX_SIZE * HEX_FACTOR;
 
 pub const HEIGHT_PIXELS: usize = 2160;
@@ -52,7 +53,7 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN + 
 pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 // In real life, continental shelves can extend as little as 50 miles or as much as 310 miles from shore.
-pub const CONTINENTAL_SHELF_WIDTH: usize = (150.0 * 2.0 / HEX_FACTOR) as usize;
+pub const CONTINENTAL_SHELF_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
 pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
 pub const CONTINENTAL_SHELF_INCREMENT: f32 = CONTINENTAL_SHELF_DEPTH / CONTINENTAL_SHELF_WIDTH as f32;
 pub const CONTINENTAL_SLOPE_GRADE: f32 = 0.05; // About 3 degrees.
@@ -66,26 +67,11 @@ pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDT
 pub const ABYSSAL_PLAINS_INCREMENT: f32 = (ABYSSAL_PLAINS_MAX_DEPTH - ABYSSAL_PLAINS_MIN_DEPTH) / ABYSSAL_PLAINS_WIDTH as f32;
 pub const SEA_LEVEL: f32 = 0.0;
 
-// TODO: Might want to use a smaller value for the northern "bumper".
-pub const BUMPER_MAX_ELEVATION: f32 = HEX_SIZE / 3.0;
-pub const BUMPER_RANGE: usize = 120;
-
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
-pub const NORTH_DESERT_INCREMENT: f32 = (NORTH_DESERT_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / (NORTH_DESERT_WIDTH - NE_BASIN_FRINGE) as f32;
-pub const NE_BASIN_ELEVATION: f32 = 636.0;
 
+// With Perlin noise, actual elevation will likely be lower than these numbers.
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
-pub const CENTRAL_HIGHLAND_INCREMENT: f32 = (CENTRAL_HIGHLAND_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
-// With Perlin noise, actual elevation will likely be lower than this.
-pub const SE_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
-pub const SE_MOUNTAINS_INCREMENT: f32 = (SE_MOUNTAINS_MAX_ELEVATION - RANDOM_ELEVATION_FACTOR) / MAIN_RIVER_WIDTH as f32;
-pub const SW_RANGE_MAX_ELEVATION: f32 = 16_854.0;
-// TODO: Get rid of this when I'm sure I don't need it.
-pub const SW_RANGE_FRINGE: usize = 0;
-pub const SW_RANGE_HEIGHT: usize = 150 * 2;
-pub const SW_RANGE_X_START: usize = TOTAL_SEA_WIDTH as usize;
-pub const SW_RANGE_Y_START: usize = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + SW_RANGE_FRINGE * 4;
-pub const SW_RANGE_WIDTH: usize = NORTH_DESERT_WIDTH;
+pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 0.15; // erosion rate fraction
@@ -96,9 +82,6 @@ pub const KD: f32 = 0.01; // deposition rate fraction
 // TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE basin.
 // 0.01 hours of average flow through the Aswan Dam.
 pub const RIVER_WATER_PER_STEP: f32 = 0.371; // Feet
-// In the river bed.
-pub const TARGET_DROP_PER_HEX: f32 = 0.4; // Feet
-pub const TARGET_RIVER_DEPTH: f32 = 32.0; // Feet
 pub const FLOW_FACTOR: f32 = 0.90;
 // Might take 7k-10k rounds to carve out the river valley I want.
 pub const DEFAULT_ROUNDS: u32 = 4_800;
@@ -108,20 +91,9 @@ pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
 pub const MAX_SLOPE: f32 = 1.00;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
-pub const MAX_ELEVATION: f32 = SEA_LEVEL + SE_MOUNTAINS_MAX_ELEVATION;
+pub const MAX_ELEVATION: f32 = SEA_LEVEL + SOUTH_MOUNTAINS_MAX_ELEVATION;
 pub const LOG_ROUNDS: u32 = 100;
 
-pub const BIG_VOLCANO_INITIAL_ELEVATION: f32 = HEX_SIZE * (5.0 + 6.0 * 4.0 + 12.0 * 3.0 + 18.0 * 2.0 + 24.0 * 1.0);
 pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
 
-pub const ISLAND_CHAIN_X: usize = WIDTH_HEXAGONS - NE_BASIN_WIDTH - MAIN_RIVER_WIDTH - (1_200.0 / HEX_FACTOR) as usize;
-pub const FIRST_ISLAND_Y: usize = (12.75 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
-pub const FIRST_ISLAND_MAX_ELEVATION: f32 = 11_014.0;
-pub const SECOND_ISLAND_Y: usize = (9.56 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
-pub const SECOND_ISLAND_MAX_ELEVATION: f32 = 8_058.0;
-
-pub const RING_VALLEY_RADIUS: usize = 5;
-pub const RING_VALLEY_X: usize = TOTAL_SEA_WIDTH + COAST_WIDTH - RING_VALLEY_RADIUS;
-pub const RING_VALLEY_Y: usize = (8.0 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
-// TODO: Try setting this to an absurd value to confirm it works.
-pub const RING_VALLEY_ELEVATION_BONUS: f32 = 240.0;
+// TODO: Configure island chain to be about 500 miles off the coast.

@@ -14,7 +14,3 @@ bytemuck = { version = "1.13", features = ["derive"] }
 pollster = "0.3"
 futures-intrusive = "0.4"
 noise = "0.9"
-
-[[bin]]
-name = "main_gpu_test"
-path = "src/main_gpu_test.rs" 
