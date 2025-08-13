@@ -114,11 +114,6 @@ pub struct GpuSimulation {
     ocean_bind_group: wgpu::BindGroup,
     ocean_params_buffer: wgpu::Buffer,
     ocean_out_buffer: wgpu::Buffer,
-    // river source updater
-    river_pipeline: wgpu::ComputePipeline,
-    river_bgl: wgpu::BindGroupLayout,
-    river_bind: wgpu::BindGroup,
-    river_params_buf: wgpu::Buffer,
     // --- repose (angle-of-repose) resources ---
     delta_buffer: wgpu::Buffer,
     repose_pipeline: wgpu::ComputePipeline,
@@ -574,49 +569,6 @@ impl GpuSimulation {
             ],
         });
 
-        // ---- river source updater pipeline ----
-        let river_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("River Source Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/river_source.wgsl").into()),
-        });
-
-        let river_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("River Source BGL"),
-            entries: &[
-                buf_rw!(0, false),  // hex_data (storage, read-write)
-                uniform_entry!(1),   // params (uniform)
-            ],
-        });
-
-        let river_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("River Source Pipeline Layout"),
-            bind_group_layouts: &[&river_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let river_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("River Source Pipeline"),
-            layout: Some(&river_pipeline_layout),
-            module: &river_shader,
-            entry_point: "main",
-        });
-
-        let river_params_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("River Params Buffer"),
-            size: std::mem::size_of::<[f32; 6]>() as u64,
-            usage: BU::UNIFORM | BU::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let river_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("River Bind Group"),
-            layout: &river_bgl,
-            entries: &[
-                bg_entry!(0, &hex_buffer),
-                bg_entry!(1, &river_params_buf),
-            ],
-        });
-
         // ---- repose (angle-of-repose) resources ----
         let delta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Delta Buffer"),
@@ -745,11 +697,6 @@ impl GpuSimulation {
             ocean_bind_group,
             ocean_params_buffer,
             ocean_out_buffer,
-            // river source updater
-            river_pipeline,
-            river_bgl,
-            river_bind,
-            river_params_buf,
             // --- repose (angle-of-repose) resources ---
             delta_buffer,
             repose_pipeline,
@@ -862,23 +809,6 @@ impl GpuSimulation {
                 bg_entry!(0,&self.hex_buffer),
                 bg_entry!(1,&self.ocean_params_buffer),
                 bg_entry!(2,&self.ocean_out_buffer),
-            ],
-        });
-
-        // Resize river params buffer and bind group
-        self.river_params_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("River Params Buffer"),
-            size: std::mem::size_of::<[f32; 6]>() as u64,
-            usage: BU::UNIFORM | BU::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        self.river_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("River Bind Group"),
-            layout: &self.river_bgl,
-            entries: &[
-                bg_entry!(0, &self.hex_buffer),
-                bg_entry!(1, &self.river_params_buf),
             ],
         });
 
