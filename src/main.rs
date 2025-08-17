@@ -101,7 +101,7 @@ struct Hex {
     water_depth: f32, // Feet of water currently stored in this hex
     suspended_load: f32, // Feet of sediment stored in water column
     rainfall: f32, // Feet of rainfall added to this hex per step
-    // TODO: an original_land flag would be useful for logging.
+    original_land: bool,
 }
 
 // This can be done more cleanly with floor division, but the
@@ -212,6 +212,7 @@ fn upload_hex_data(hex_map: &Vec<Vec<Hex>>, gpu_sim: &GpuSimulation) {
                 water_depth: h.water_depth,
                 suspended_load: h.suspended_load,
                 rainfall: h.rainfall,
+                residual_elevation: 0.0,
             });
         }
     }
@@ -226,7 +227,7 @@ fn download_hex_data(gpu_sim: &GpuSimulation, hex_map: &mut Vec<Vec<Hex>>) {
         let y = idx / width;
         let x = idx % width;
         let cell = &mut hex_map[y][x];
-        cell.elevation = h.elevation;
+        cell.elevation = h.elevation + h.residual_elevation;
         cell.water_depth = h.water_depth;
         cell.suspended_load = h.suspended_load;
     }
@@ -320,7 +321,9 @@ fn simulate_rainfall(
         let mut step_sediment_in = 0.0f32;
         let mut step_sediment_out = 0.0f32;
 
-        if _step % (WIDTH_HEXAGONS as u32 * LOG_ROUNDS) == 0 {
+        // Map's dimensions define what constitutes a "round", since it determines how long it takes
+        // for changes on one side of the map to propagate to the other.
+        if _step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -345,11 +348,11 @@ fn simulate_rainfall(
             let (water_on_land, max_depth) = hex_map
                 .par_iter()
                 .map(|row| {
-                    let mut sum = 0.0f32;
-                    let mut row_max = 0.0f32;
+                    let mut sum = 0.0f64;
+                    let mut row_max = 0.0f64;
                     for h in row {
                         if h.elevation > SEA_LEVEL {
-                            let d = h.water_depth;
+                            let d = h.water_depth as f64;
                             sum += d;
                             if d > row_max {
                                 row_max = d;
@@ -359,7 +362,7 @@ fn simulate_rainfall(
                     (sum, row_max)
                 })
                 .reduce(
-                    || (0.0f32, 0.0f32),
+                    || (0.0f64, 0.0f64),
                     |acc, val| {
                         (
                             acc.0 + val.0,
@@ -368,14 +371,14 @@ fn simulate_rainfall(
                     },
                 );
 
-            let mean_depth = water_on_land / cells_above_sea_level as f32;
+            let mean_depth = water_on_land / cells_above_sea_level as f64;
 
             let wet_cells: usize = hex_map
                 .par_iter()
                 .map(|row| row.iter().filter(|h| h.elevation > SEA_LEVEL && h.water_depth > WATER_THRESHOLD).count())
                 .sum();
 
-            let wet_cells_percentage = wet_cells as f32 / cells_above_sea_level as f32 * 100.0;
+            let wet_cells_percentage = wet_cells as f64 / cells_above_sea_level as f64 * 100.0;
 
             let source_hex = &hex_map[RIVER_Y][RIVER_SOURCE_X];
             let outlet_hex = &hex_map[RIVER_Y][river_outlet_x];
@@ -409,14 +412,26 @@ fn simulate_rainfall(
                 (acc.0.min(val.0), acc.1.max(val.1))
             });
 
-            let total_land: f32 = hex_map
+            let total_land: f64 = hex_map
                 .iter()
-                .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
-                .map(|h| h.elevation)
+                .flat_map(|row| row.iter().filter(|h| h.original_land))
+                .map(|h| h.elevation as f64)
+                .sum();
+
+            let net_land: f64 = hex_map
+                .iter()
+                .flat_map(|row| row.iter())
+                .map(|h| h.elevation as f64)
+                .sum();
+
+            let total_sediment: f64 = hex_map
+                .iter()
+                .flat_map(|row| row.iter())
+                .map(|h| h.suspended_load as f64)
                 .sum();
 
             println!(
-                "Round {:.0}: water in {:.3}  stored {:.0}  mean depth {:.2} ft  max depth {:.2} ft  wet {:} ({:.1}%)  source elevation {:.2} ft  outlet elevation {:.2} ft  target delta elevation {:.2} ft  total land {:.0}",
+                "Round {:.0}: water in {:.3}  stored {:.3}  mean depth {:.3} ft  max depth {:.3} ft  wet {:} ({:.1}%)  source elevation {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
                 round,
                 (rainfall_added + RIVER_WATER_PER_STEP),
                 water_on_land,
@@ -427,9 +442,20 @@ fn simulate_rainfall(
                 source_hex.elevation,
                 outlet_hex.elevation,
                 target_delta_hex.elevation,
-                total_land,
             );
-            println!("  min elevation: {:.2} ft  max elevation: {:.2} ft  time: {:?}", min_elevation, max_elevation, water_start.elapsed());
+            println!("  total land (original): {:.3} ft  net land: {:.3} ft  total sediment: {:.3} ft", total_land, net_land, total_sediment);
+            println!("  min elevation: {:.3} ft  max elevation: {:.3} ft  time: {:?}", min_elevation, max_elevation, water_start.elapsed());
+
+            let outflows = gpu_sim.download_ocean_outflows(height);
+            let total_water_out: f64 = outflows.iter().map(|o| o.water_out as f64).sum();
+            let total_sed_out: f64 = outflows.iter().map(|o| o.sediment_out as f64).sum();
+            let eros_log = gpu_sim.download_erosion_log(width, height);
+            let total_eroded: f64 = eros_log.iter().map(|e| e[0] as f64).sum();
+            let total_deposited: f64 = eros_log.iter().map(|e| e[1] as f64).sum();
+            println!(
+                "  diagnostics: water_out {:.3}  sed_out {:.3}  eroded {:.3}  deposited {:.3}",
+                total_water_out, total_sed_out, total_eroded, total_deposited
+            );
 
             let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
             render_frame(hex_map, &mut frame_buffer, current_sea_level, true);
@@ -441,54 +467,68 @@ fn simulate_rainfall(
 
         gpu_sim.run_rainfall_step(width * height, current_sea_level);
 
+        // if _step % 100 == 0 {
+        //     print_elevation_and_sediment(&gpu_sim, "new step");
+        // }
+
         // GPU min-slope + erosion/deposition passes
         gpu_sim.run_min_neigh_step(width, height);
         gpu_sim.run_erosion_step(width, height);
 
+        // print_elevation_and_sediment(&gpu_sim, "min-slope + erosion/deposition");
+
         // GPU water routing
         gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
+
+        // print_elevation_and_sediment(&gpu_sim, "water routing");
+
         gpu_sim.run_scatter_step(width, height);
+
+        // print_elevation_and_sediment(&gpu_sim, "scatter");
 
         gpu_sim.run_repose_step(width, height);
 
-        // TODO: Get water / sediment outflows from GPU for diagnostic purposes?
+        // print_elevation_and_sediment(&gpu_sim, "repose");
+        // println!("--------------------------------");
+
+        // Apply ocean boundary
         gpu_sim.run_ocean_boundary(width, height, current_sea_level);
     }
 
     download_hex_data(&gpu_sim, hex_map);
 
-    let water_remaining: f32 = hex_map
+    let water_remaining: f64 = hex_map
         .iter()
         .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
-        .map(|h| h.water_depth)
+        .map(|h| h.water_depth as f64)
         .sum();
 
-    let land_remaining: f32 = hex_map
+    let land_remaining: f64 = hex_map
         .iter()
-        .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
-        .map(|h| h.elevation)
+        .flat_map(|row| row.iter().filter(|h| h.original_land))
+        .map(|h| h.elevation as f64)
         .sum();
 
-    let water_remaining_north: f32 = hex_map
+    let water_remaining_north: f64 = hex_map
         .iter()
         .take(NORTH_DESERT_HEIGHT)
         .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
-        .map(|h| h.water_depth)
+        .map(|h| h.water_depth as f64)
         .sum();
 
-    let water_remaining_ne_basin: f32 = hex_map
+    let water_remaining_ne_basin: f64 = hex_map
         .iter()
         .take(NORTH_DESERT_HEIGHT)
         .flat_map(|row| row.iter().skip(TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH))
-        .map(|h| h.water_depth)
+        .map(|h| h.water_depth as f64)
         .sum();
 
-    let water_remaining_central: f32 = hex_map
+    let water_remaining_central: f64 = hex_map
         .iter()
         .skip(NORTH_DESERT_HEIGHT)
         .take(CENTRAL_HIGHLAND_HEIGHT)
         .flat_map(|row| row.iter().filter(|h| h.elevation > current_sea_level))
-        .map(|h| h.water_depth)
+        .map(|h| h.water_depth as f64)
         .sum();
 
     // Experimenting with h.elevation > current_sea_level or h.water_depth <= WATER_THRESHOLD.
@@ -528,6 +568,13 @@ fn simulate_rainfall(
     );
 
     current_sea_level
+}
+
+fn print_elevation_and_sediment(gpu_sim: &GpuSimulation, step_label: &str) {
+    let hex_data = gpu_sim.download_hex_data();
+    let sum_elev: f64 = hex_data.iter().map(|h| h.elevation as f64).sum();
+    let sum_sed: f64 = hex_data.iter().map(|h| h.suspended_load as f64).sum();
+    println!("{}: sum_elev {:.6}  sum_sed {:.6}  sum_mass {:.6}", step_label, sum_elev, sum_sed, sum_elev + sum_sed);
 }
 
 fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
@@ -705,7 +752,17 @@ fn main() {
                 }
             }
 
-            // TODO: Vary cut depth using perlin noise.
+            // This produces a cut whose downward slope is 2 * MOUNTAINS_MAX_ELEVATION / COAST_WIDTH
+            // The cut's deepest point is COAST_WIDTH * cut_factor from the coast, at a depth of 2 * MOUNTAINS_MAX_ELEVATION * cut_factor.
+            // Then it slopes upward out to the point where
+            // (COAST_WIDTH as f32 * cut_factor - distance_from_coast) * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor) = 0
+            // or
+            // SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor / 2.0 - distance_from_coast * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor = 0
+            // SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor = distance_from_coast * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0
+            // 3 * cut_factor = distance_from_coast / COAST_WIDTH as f32
+            // 3 * cut_factor * COAST_WIDTH as f32 = distance_from_coast
+            // Total area of cut is 3 * MOUNTAINS_MAX_ELEVATION * COAST_WIDTH * cut_factor^2
+            // TODO: rather than try to estimate the area of the cut I should actually just track what's removed.
             if distance_from_coast > COAST_WIDTH as f32 * cut_factor {
                 elevation = elevation.min(distance_from_coast * 2.0 / COAST_WIDTH as f32 * SOUTH_MOUNTAINS_MAX_ELEVATION);
             } else {
@@ -768,7 +825,6 @@ fn main() {
                         elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
                     }
                 } else {
-                    // Set lower so we can see the actual maximum elevation generated by the Perlin noise.
                     elevation = MAX_ELEVATION;
                     rain_class = -1;
                 }
@@ -799,6 +855,7 @@ fn main() {
                 water_depth: 0.0,
                 suspended_load: 0.0,
                 rainfall: rainfall * RAINFALL_FACTOR,
+                original_land: elevation > SEA_LEVEL,
             });
         }
     }

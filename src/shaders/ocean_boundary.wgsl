@@ -5,7 +5,8 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _padding: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct Outflow {
@@ -59,9 +60,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         sediment_out = fluid_out * sediment_fraction(cell);
     }
 
-    // Write outflow amounts
-    out_data[index].water_out = water_out;
-    out_data[index].sediment_out = sediment_out;
+    // Write outflow amounts (one entry per row)
+    out_data[y].water_out = water_out;
+    out_data[y].sediment_out = sediment_out;
 
     // Apply ocean boundary
     cell.water_depth -= water_out;

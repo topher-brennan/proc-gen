@@ -63,6 +63,7 @@ pub struct HexGpu {
     pub water_depth: f32,
     pub suspended_load: f32,
     pub rainfall: f32, // per-hex rainfall depth per step
+    pub residual_elevation: f32,
 }
 
 #[repr(C)]
@@ -114,6 +115,7 @@ pub struct GpuSimulation {
     ocean_bind_group: wgpu::BindGroup,
     ocean_params_buffer: wgpu::Buffer,
     ocean_out_buffer: wgpu::Buffer,
+    erosion_log_buffer: wgpu::Buffer,
     // --- repose (angle-of-repose) resources ---
     delta_buffer: wgpu::Buffer,
     repose_pipeline: wgpu::ComputePipeline,
@@ -503,6 +505,7 @@ impl GpuSimulation {
               buf_rw!(0,false),            // hex_data
               buf_rw!(1,true),             // min_elev (read)
               uniform_entry!(2),
+              buf_rw!(3,false),            // erosion log buffer
         ]});
         let eros_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
             label:Some("eros layout"), bind_group_layouts:&[&eros_bgl], push_constant_ranges:&[] });
@@ -510,12 +513,22 @@ impl GpuSimulation {
             label:Some("eros pipe"), layout:Some(&eros_layout), module:&eros_shader, entry_point:"main"});
         let erosion_params = device.create_buffer(&wgpu::BufferDescriptor{
             label:Some("eros params"), size:24, usage:BU::UNIFORM|BU::COPY_DST, mapped_at_creation:false});
+        // Create a placeholder erosion_log_buffer before binding (resized later)
+        let erosion_log_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Erosion Log Buffer"),
+            size: 4u64,
+            usage: BU::STORAGE | BU::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let erosion_bind = device.create_bind_group(&wgpu::BindGroupDescriptor{
             label:Some("eros BG"), layout:&eros_bgl, entries:&[
                 bg_entry!(0,&hex_buffer),
                 bg_entry!(1,&min_elev_buffer),
                 bg_entry!(2,&erosion_params),
-        ]});
+                bg_entry!(3,&erosion_log_buffer),
+            ],
+        });
 
         // ---- ocean boundary pipeline ----
         let ocean_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -558,6 +571,8 @@ impl GpuSimulation {
             usage: BU::STORAGE | BU::COPY_SRC,
             mapped_at_creation: false,
         });
+
+        // erosion_log_buffer created above before bind group
 
         let ocean_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Ocean Boundary BG"),
@@ -697,6 +712,7 @@ impl GpuSimulation {
             ocean_bind_group,
             ocean_params_buffer,
             ocean_out_buffer,
+            erosion_log_buffer,
             // --- repose (angle-of-repose) resources ---
             delta_buffer,
             repose_pipeline,
@@ -798,6 +814,14 @@ impl GpuSimulation {
         self.ocean_out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Ocean Out Buffer"),
             size: (height * std::mem::size_of::<OutGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // --- Resize erosion log buffer ---
+        self.erosion_log_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Erosion Log Buffer"),
+            size: (width * height * std::mem::size_of::<[f32;4]>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -977,6 +1001,7 @@ impl GpuSimulation {
                 bg_entry!(0,&self.hex_buffer),
                 bg_entry!(1,&self.min_elev_buffer),
                 bg_entry!(2,&self.erosion_params),
+                bg_entry!(3,&self.erosion_log_buffer),
             ],
         });
     }
@@ -997,6 +1022,52 @@ impl GpuSimulation {
         let total = (width * height) as u32;
         let groups = (total + 255) / 256;
         dispatch_compute!(self.device, self.queue, self.erosion_pipeline, self.erosion_bind, groups);
+    }
+
+    pub fn download_ocean_outflows(&self, height: usize) -> Vec<OutGpu> {
+        let size_bytes = (height * std::mem::size_of::<OutGpu>()) as u64;
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Outflow Staging"),
+            size: size_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Ocean Outflow DL") });
+        encoder.copy_buffer_to_buffer(&self.ocean_out_buffer, 0, &staging, 0, size_bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+        let slice = staging.slice(..);
+        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+        self.device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(rx.receive()).unwrap().unwrap();
+        let data = slice.get_mapped_range();
+        let vec: Vec<OutGpu> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        vec
+    }
+
+    pub fn download_erosion_log(&self, width: usize, height: usize) -> Vec<[f32;4]> {
+        let size_bytes = (width * height * std::mem::size_of::<[f32;4]>()) as u64;
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Erosion Log Staging"),
+            size: size_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Erosion Log DL") });
+        encoder.copy_buffer_to_buffer(&self.erosion_log_buffer, 0, &staging, 0, size_bytes);
+        self.queue.submit(std::iter::once(encoder.finish()));
+        let slice = staging.slice(..);
+        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+        self.device.poll(wgpu::Maintain::Wait);
+        pollster::block_on(rx.receive()).unwrap().unwrap();
+        let data = slice.get_mapped_range();
+        let vec: Vec<[f32;4]> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        vec
     }
 
     /// Run ocean boundary compute pass without reading data back to the CPU.

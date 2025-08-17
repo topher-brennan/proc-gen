@@ -2,7 +2,8 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _padding: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 @group(0) @binding(0)
@@ -71,7 +72,7 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (index >= total_hexes) {
         return;
     }
-    
+
     let x = i32(index % width);
     let y = i32(index / width);
     
@@ -137,7 +138,6 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let diff = height(hex) - height(target_hex);
         // Old formula based on two-way fork rather than three-way
         // let move_f = min(select(diff * constants.flow_factor, f, diff > f), constants.max_flow);
-
         var move_f = 0.0;
         if (2.0 * f <= diff) {
             move_f = f;
@@ -148,6 +148,8 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         move_f = min(move_f, constants.max_flow);
+        // Extra safety: never route more fluid than present
+        move_f = min(move_f, f);
 
         if (move_f > 0.0) {
             next_water[index] = (1.0 - sediment_fraction(hex)) * move_f;

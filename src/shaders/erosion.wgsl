@@ -5,13 +5,23 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _pad: f32,
+    _pad1: f32,
+    elevation_residual: f32,
+};
+
+struct Log {
+    eroded: f32,
+    deposited: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 @group(0) @binding(1)
 var<storage, read> min_elev: array<f32>;   // output from min_neigh pass
+@group(0) @binding(3)
+var<storage, read_write> erosion_log: array<Log>;
 
 struct Params {
     kc: f32,
@@ -30,6 +40,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (idx >= arrayLength(&hex_data)) { return; }
 
     var cell = hex_data[idx];
+    var residual = cell.elevation_residual;
+    var log_entry: Log = Log(0.0, 0.0, 0.0, 0.0);
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[idx]), 0.0);
@@ -37,19 +49,33 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (cell.suspended_load < capacity) {
         // erode
-        // TODO: Look for better ways to prevent sea floor from being eroded below initial minimum?
         let amount = P.ke * (capacity - cell.suspended_load);
-        cell.elevation      -= amount;
+
+        residual -= amount;
+        let adj = trunc(residual * 512.0) / 512.0;
+        cell.elevation += adj;
+        residual -= adj;
+
+        cell.elevation_residual = residual;
         cell.suspended_load += amount;
+        log_entry.eroded = amount;
     } else {
         // deposit
         var amount = P.kd * (cell.suspended_load - capacity);
         if (cell.elevation + amount > P.max_elev) {
             amount = P.max_elev - cell.elevation;
         }
-        cell.elevation      += amount;
+
+        residual += amount;
+        let adj = trunc(residual * 1024.0) / 1024.0;
+        cell.elevation += adj;
+        residual -= adj;
+
+        cell.elevation_residual = residual;
         cell.suspended_load -= amount;
+        log_entry.deposited = amount;
     }
 
     hex_data[idx] = cell;
+    erosion_log[idx] = log_entry;
 } 

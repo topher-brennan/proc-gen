@@ -8,6 +8,7 @@ struct Hex {
     _pad1:           f32,
     _pad2:           f32,
     _pad3:           f32,
+    _pad4:           f32,
 };
 
 struct Consts {

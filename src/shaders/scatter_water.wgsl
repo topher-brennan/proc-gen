@@ -2,7 +2,8 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _padding: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 @group(0) @binding(0)
@@ -43,14 +44,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let total = u32(consts.width*consts.height);
     if(index>=total){ return; }
 
-    let w_out = out_water[index];
-    let l_out = out_load[index];
+    let water_out = out_water[index];
+    let load_out = out_load[index];
 
-    // Subtract own outflow
-    var wd = hex_data[index].water_depth - w_out;
-    var ld = hex_data[index].suspended_load - l_out;
-    if (wd < 0.0) { wd = 0.0; }
-    if (ld < 0.0) { ld = 0.0; }
+    // Subtract own outflow (saturating to avoid tiny negative clamp losses)
+    let current_water = hex_data[index].water_depth;
+    let current_load = hex_data[index].suspended_load;
+    var new_water = current_water - min(water_out, current_water);
+    var new_load = current_load - min(load_out, current_load);
 
     // add inflows from neighbours
     let w = u32(consts.width);
@@ -84,11 +85,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if(!valid(nx,ny)){continue;}
         let n_idx = idx(nx,ny);
         if(tgt_buffer[n_idx]==index){
-            wd += out_water[n_idx];
-            ld += out_load[n_idx];
+            new_water += out_water[n_idx];
+            new_load += out_load[n_idx];
         }
     }
 
-    hex_data[index].water_depth = wd;
-    hex_data[index].suspended_load = ld;
+    hex_data[index].water_depth = new_water;
+    hex_data[index].suspended_load = new_load;
 } 

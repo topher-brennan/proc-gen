@@ -3,6 +3,7 @@ struct Hex {
     water_depth: f32,
     suspended_load: f32,
     rainfall: f32,
+    _pad1: f32,
 }
 
 @group(0) @binding(0)

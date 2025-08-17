@@ -67,16 +67,17 @@ pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDT
 pub const ABYSSAL_PLAINS_INCREMENT: f32 = (ABYSSAL_PLAINS_MAX_DEPTH - ABYSSAL_PLAINS_MIN_DEPTH) / ABYSSAL_PLAINS_WIDTH as f32;
 pub const SEA_LEVEL: f32 = 0.0;
 
-pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
-
 // With Perlin noise, actual elevation will likely be lower than these numbers.
+// TODO: Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
+//       say by .01% per 60 rounds the simulation will run for.
+pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
 pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 0.15; // erosion rate fraction
-// TODO: experimentally still get the weird little pits in lakes at 0.05
-// got reduced number of weird little pits at 0.02, let's try 0.01
+// Anything more than about 0.01 will cause weird little pits in lakes.
+// I was hoping fixing rounding errors in the erosion shader would fix this, but it didn't.
 pub const KD: f32 = 0.01; // deposition rate fraction
 
 // TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE basin.
