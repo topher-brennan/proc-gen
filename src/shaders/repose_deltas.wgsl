@@ -2,13 +2,12 @@
 // If a cell is much higher than a neighbor, it "loses" elevation, and the neighbor "gains" it.
 // This uses atomics to safely handle multiple neighbors trying to modify the same cell's delta.
 
-// 16-byte stride to match HexGpu
 struct Hex {
-    elevation:       f32,
-    _pad1:           f32,
-    _pad2:           f32,
-    _pad3:           f32,
-    _pad4:           f32,
+    elevation:          f32,
+    water_depth:        f32,
+    suspended_load:     f32,
+    _rainfall:              f32,
+    elevation_residual: f32,
 };
 
 struct Consts {
@@ -47,7 +46,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let x = i32(index % u32(C.width));
     let y = i32(index / u32(C.width));
-    let elev = hex_data[index].elevation;
+    let elev = total_elevation(hex_data[index]);
 
     let even_col = (x & 1) == 0;
 
@@ -67,7 +66,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if (is_valid_coord(nx, ny)) {
             let neighbor_index = get_hex_index(nx, ny);
-            let neighbor_elev = hex_data[neighbor_index].elevation;
+            let neighbor_elev = total_elevation(hex_data[neighbor_index]);
             let diff = elev - neighbor_elev;
 
             if (diff > C.hex_size) {

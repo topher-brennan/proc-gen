@@ -433,7 +433,7 @@ fn simulate_rainfall(
             println!(
                 "Round {:.0}: water in {:.3}  stored {:.3}  mean depth {:.3} ft  max depth {:.3} ft  wet {:} ({:.1}%)  source elevation {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
                 round,
-                (rainfall_added + RIVER_WATER_PER_STEP),
+                rainfall_added,
                 water_on_land,
                 mean_depth,
                 max_depth,
@@ -462,10 +462,19 @@ fn simulate_rainfall(
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
             render_frame(hex_map, &mut frame_buffer, current_sea_level, false);
-            save_buffer_png("terrain.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            if _step == 0 {
+                // For checking for weird behavior as erosion progresses.
+                save_buffer_png("terrain_initial.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            } else {
+                save_buffer_png("terrain.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
+            }
+        } else {
+            // TODO: Get the heartbeat to work.
+            gpu_sim.heartbeat();
         }
 
         gpu_sim.run_rainfall_step(width * height, current_sea_level);
+        
 
         // if _step % 100 == 0 {
         //     print_elevation_and_sediment(&gpu_sim, "new step");
@@ -662,24 +671,50 @@ fn get_erruption_elevation(target_elevation: f32) -> f32 {
     erruption_elevation
 }
 
+// Generates a value between 0 and 1.
 fn get_perlin_noise(perlin: &Perlin, input: f64, period: f64) -> f32 {
     (perlin.get([input / period]) as f32 + 1.0) / 2.0
 }
 
+// Generates a value between 0 and 1.
 fn get_perlin_noise_for_hex(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32 {
     (perlin.get([x * HEX_FACTOR as f64 / period, y / period]) as f32 + 1.0) / 2.0
 }
 
+// Generates a value between -COAST_WIDTH/2 and COAST_WIDTH/2.
 fn get_sea_deviation(perlin: &Perlin, y: f64, period: f64) -> usize {
     ((get_perlin_noise(perlin, y, period) - 0.5) * COAST_WIDTH as f32) as usize
 }
 
+// Generates a value between -12 and 12.
+fn get_land_deviation(perlin: &Perlin, x: f64, y: f64, period: f64) -> i16 {
+    ((get_perlin_noise_for_hex(perlin, x, y, period) - 0.5) * 24.0 * 2.0) as i16
+}
+
+fn get_rainfall(rain_class: i32) -> f32 {
+    match rain_class {
+        0 => VERY_LOW_RAIN,
+        1 => LOW_RAIN,
+        2 => MEDIUM_RAIN,
+        3 => HIGH_RAIN,
+        4 => VERY_HIGH_RAIN,
+        // default error case
+        _ => 0.0,
+    }
+}
+
 fn main() {
-    // Allow user to override number of rounds via command-line: first positional arg is rounds, e.g. `cargo run --release -- 2000`
+    // Allow user to override number of rounds via command-line: first positional arg is rounds,
+    // e.g. `$env:RUST_BACKTRACE=1; cargo run --release -- 24000`
     let rounds: u32 = std::env::args()
         .nth(1)
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(DEFAULT_ROUNDS);
+
+    let elevation_adjustment = rounds as f32 / 60_000.0 as f32;
+    let adj_south_mountains_max_elevation = SOUTH_MOUNTAINS_MAX_ELEVATION * (1.0 + elevation_adjustment);
+    let adj_central_highland_max_elevation = CENTRAL_HIGHLAND_MAX_ELEVATION * (1.0 + elevation_adjustment * LOW_RAIN / MEDIUM_RAIN);
+    let adj_north_desert_max_elevation = NORTH_DESERT_MAX_ELEVATION * (1.0 + elevation_adjustment * VERY_LOW_RAIN / MEDIUM_RAIN);
 
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
@@ -690,7 +725,9 @@ fn main() {
     let perlin = Perlin::new(seed);
     let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
     let sea_deviation_for_river_y = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+    
     let river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y;
+    let land_deviation_for_outlet = get_land_deviation(&perlin, river_outlet_x as f64, RIVER_Y as f64, 96.0);
 
     // Time hex map creation
     let hex_start = Instant::now();
@@ -706,6 +743,8 @@ fn main() {
             let mut elevation = 0.0;
             let mut distance_from_coast = (x + sea_deviation) as f32 - TOTAL_SEA_WIDTH as f32;
             let adjusted_y = y as f64 + (x % 2) as f64 * 0.5;
+            let y_deviation = land_deviation_for_outlet - get_land_deviation(&perlin, x as f64, y as f64, 96.0);
+            let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
 
             // TODO: Continental probably shouldn't exactly follow coastline. In fact it would be cool if the god-knife-carving-out-the-coastline
             // thing I've got going on cut into the continental shelf.
@@ -722,61 +761,42 @@ fn main() {
                 let coastal_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, COAST_WIDTH as f64);
                 let perlin_noise = ((transition_period_noise + coastal_noise + map_third_noise) / 3.0).powf(3.0_f32.log2());
 
-                if y < NORTH_DESERT_HEIGHT {
-                    let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, y as i32);
+                if deviated_y < NORTH_DESERT_HEIGHT {
+                    let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
                     let (cx2, cy2) = hex_coordinates_to_cartesian(TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32, RIVER_Y as i32);
                     // Area is oval-shaped, not circular, with the longer axis running east-west.
+                    // Experiment with ratio of major axis to minor axis, too long might look weird but too short can result in the river
+                    // jumping the tracks, so to speak.
                     let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.5, cy2) / (transition_period as f32)).min(1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
-                } else if y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                    // Similar to making sure the river isn't too far north, we should take steps to make sure the delta isn't too far south.
+                } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     // Faster transition because it's a less dramatic change.
-                    let factor = ((y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(1.0);
-                    elevation = perlin_noise * ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
+                    let factor = ((deviated_y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(1.0);
+                    elevation = perlin_noise * ((adj_central_highland_max_elevation - adj_north_desert_max_elevation) * factor + adj_north_desert_max_elevation);
                 } else {
-                    // Should probably be renamed "south mountains"
-                    // let coast_factor = distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32;
-                    let factor = ((y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(1.0);
-                    elevation = perlin_noise * ((SOUTH_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
+                    let factor = ((deviated_y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(1.0);
+                    elevation = perlin_noise * ((adj_south_mountains_max_elevation - adj_central_highland_max_elevation) * factor + adj_central_highland_max_elevation);
                 }
 
-                if y < RIVER_Y - (transition_period) as usize {
+                if deviated_y < RIVER_Y - (transition_period) as usize {
                     // This is to prevent the river outlet from being too far north.
-                    // TODO: Maybe fade this out once we get very far north?
-                    // let coast_factor = (1.0 - distance_from_coast as f32 * 2.0 / COAST_WIDTH as f32).max(0.0);
-                    let factor = ((RIVER_Y as f32 - transition_period as f32 * 2.0 - y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
-                    elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION + (1.0 - perlin_noise) * NORTH_DESERT_MAX_ELEVATION * (1.0 - factor) * 0.25;
-                } else if y < NORTH_DESERT_HEIGHT + transition_period as usize {
-                    let factor = ((NORTH_DESERT_HEIGHT as f32 - y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
-                    elevation += (1.0 - perlin_noise) * (CENTRAL_HIGHLAND_MAX_ELEVATION * 0.25) * (1.0 - factor);
+                    let factor = ((RIVER_Y as f32 - transition_period as f32 * 2.0 - deviated_y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
+                    elevation = perlin_noise * adj_north_desert_max_elevation + (1.0 - perlin_noise) * adj_north_desert_max_elevation * (1.0 - factor) * 0.25;
+                } else if deviated_y < NORTH_DESERT_HEIGHT + transition_period as usize {
+                    // Similarly this makes sure the river isn't too far south.
+                    let factor = ((NORTH_DESERT_HEIGHT as f32 - deviated_y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
+                    elevation += (1.0 - perlin_noise) * (adj_central_highland_max_elevation * 0.25) * (1.0 - factor);
                 }
             }
 
             // This produces a cut whose downward slope is 2 * MOUNTAINS_MAX_ELEVATION / COAST_WIDTH
             // The cut's deepest point is COAST_WIDTH * cut_factor from the coast, at a depth of 2 * MOUNTAINS_MAX_ELEVATION * cut_factor.
-            // Then it slopes upward out to the point where
-            // (COAST_WIDTH as f32 * cut_factor - distance_from_coast) * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor) = 0
-            // or
-            // SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor / 2.0 - distance_from_coast * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor = 0
-            // SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor = distance_from_coast * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0
-            // 3 * cut_factor = distance_from_coast / COAST_WIDTH as f32
-            // 3 * cut_factor * COAST_WIDTH as f32 = distance_from_coast
-            // Total area of cut is 3 * MOUNTAINS_MAX_ELEVATION * COAST_WIDTH * cut_factor^2
-            // TODO: rather than try to estimate the area of the cut I should actually just track what's removed.
+            // Then it slopes upward at the multiplicative inverse of the initial slope (if I did my math right).
             if distance_from_coast > COAST_WIDTH as f32 * cut_factor {
-                elevation = elevation.min(distance_from_coast * 2.0 / COAST_WIDTH as f32 * SOUTH_MOUNTAINS_MAX_ELEVATION);
+                elevation = elevation.min(distance_from_coast * 2.0 / COAST_WIDTH as f32 * adj_south_mountains_max_elevation);
             } else {
-                elevation = elevation.min((COAST_WIDTH as f32 * cut_factor - distance_from_coast) * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor);
+                elevation = elevation.min((COAST_WIDTH as f32 * cut_factor - distance_from_coast) * adj_south_mountains_max_elevation / COAST_WIDTH as f32 / 2.0 + adj_south_mountains_max_elevation * cut_factor);
             }
-
-
-            // let mut bumper_factor = 0.0;
-            // if y > NORTH_DESERT_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + BUMPER_RANGE {
-            //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
-            // } else if y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - BUMPER_RANGE && y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT + BUMPER_RANGE {
-            //     bumper_factor = 1.0 - (y as i32 - NORTH_DESERT_HEIGHT as i32 - CENTRAL_HIGHLAND_HEIGHT as i32).abs() as f32 / (BUMPER_RANGE as f32);
-            // }
-            // elevation += BUMPER_MAX_ELEVATION * bumper_factor * (distance_from_coast as f32 / (TOTAL_LAND_WIDTH as f32));
 
             // TODO: More realistic seafloor depth, and fix islands.
             // Special features:
@@ -790,65 +810,55 @@ fn main() {
             } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                 // The northeast basin.
                 // TODO: Refactor this so I'm not doing the goofy thing in the rainfall step.
-                elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
-                if distance_from_river_y > 0 {
-                    let factor = (distance_from_river_y as f32 / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32)).min(1.0);
-                    elevation += RANDOM_ELEVATION_FACTOR * factor;
+                elevation = adj_north_desert_max_elevation * 1.01;
+                // This specifically doesn't include y-deviation so the river source is exactly where we want it to be.
+                if distance_from_river_y != 0 {
+                    let factor = ((distance_from_river_y) as f32 / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32)).min(1.0);
+                    elevation += (adj_north_desert_max_elevation * 0.01) * factor;
                 }
-            // } else if x == ISLAND_CHAIN_X {
-                // Need to figure out how to do this without causing out-of-control erosion of the sea floor.
-                // if y == FIRST_ISLAND_Y {
-                //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + FIRST_ISLAND_MAX_ELEVATION);
-                // } else if y == SECOND_ISLAND_Y {
-                //     elevation += get_erruption_elevation(SEA_LEVEL - elevation + SECOND_ISLAND_MAX_ELEVATION);
-                // }
-            }
-            // TODO: seaside cliff just north of 34 degrees latitude. Make it 512 feet at the highest point, like the Athenian acropolis.
-            if x + sea_deviation <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
-                elevation += (get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, 6.0) - 0.5) * RANDOM_ELEVATION_FACTOR * 3.0;
             }
 
-            let mut rain_class = 0;
-            if x + sea_deviation > TOTAL_SEA_WIDTH && (distance_from_coast as usize) < COAST_WIDTH {
-                rain_class += 1;
+            if x + sea_deviation <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
+                elevation += rng.gen_range(0.0..0.01) * elevation.max(HEX_SIZE as f32);
             }
-            if y > NORTH_DESERT_HEIGHT {
-                rain_class += 1;
-            }
-            if y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                rain_class += 1;
-            }
+
+            // TODO: Rain code needs to be more gradual, becomes too obvious in erosion patterns. Could use a relatively small "fringe" constant, like 6 or 7 hexes.
+            let mut rainfall = 0.0;
+
             if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                 if y <= NE_BASIN_HEIGHT {
-                    rain_class = 4;
+                    rainfall = VERY_HIGH_RAIN;
                     if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH + NE_BASIN_FRINGE {
-                        elevation = NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR;
+                        elevation = adj_north_desert_max_elevation * 1.01;
                     }
                 } else {
                     elevation = MAX_ELEVATION;
-                    rain_class = -1;
                 }
+            } else {
+                let mut rain_class = 0;
+                if deviated_y > NORTH_DESERT_HEIGHT {
+                    rain_class += 1;
+                }
+                if deviated_y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
+                    rain_class += 1;
+                }
+
+                if (distance_from_coast as usize) < COAST_WIDTH - COAST_FRINGE {
+                    rainfall = get_rainfall(rain_class + 1);
+                } else if (distance_from_coast as usize) > COAST_WIDTH + COAST_FRINGE {
+                    rainfall = get_rainfall(rain_class);
+                } else {
+                    let factor = (distance_from_coast as usize + COAST_FRINGE - COAST_WIDTH) as f32 / COAST_FRINGE as f32 / 2.0;
+                    rainfall = get_rainfall(rain_class) * factor + get_rainfall(rain_class + 1) * (1.0 - factor);
+                }
+                
             }
 
-            // Case switch statement to set rainfall based on rain_class:
-            let rainfall = match rain_class {
-                0 => VERY_LOW_RAIN,
-                1 => LOW_RAIN,
-                2 => MEDIUM_RAIN,
-                3 => HIGH_RAIN,
-                4 => VERY_HIGH_RAIN,
-                // default error case
-                _ => 0.0,
-            };
-
+            // As above, ignore y-deviation.
             if distance_from_river_y == 0 {
-                elevation = elevation.min(NORTH_DESERT_MAX_ELEVATION + RANDOM_ELEVATION_FACTOR);
-            } else {
-                // Not sure why I keep needing these little adjustments to avoid magenta
-                elevation = elevation.min(MAX_ELEVATION * 255.0 / 256.0);
+                elevation = elevation.min(adj_north_desert_max_elevation * 1.01);
             }
             
-
             hex_map[y as usize].push(Hex {
                 coordinate: (x, y),
                 elevation,

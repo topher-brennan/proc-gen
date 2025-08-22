@@ -136,7 +136,8 @@ impl GpuSimulation {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                // Or just use default?
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })
@@ -210,7 +211,7 @@ impl GpuSimulation {
 
         let rainfall_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Rainfall Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shaders/rainfall.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/rainfall.wgsl")))),
         });
 
         let rainfall_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -375,7 +376,7 @@ impl GpuSimulation {
         // Constants buffer (rain_per_step, hex_count) – rainfall shader
         let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Constants Buffer"),
-            size: std::mem::size_of::<[f32; 5]>() as u64, // Changed from [f32; 1] to [f32; 2]
+            size: std::mem::size_of::<[f32; 6]>() as u64, // Uses 6 constants
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -594,7 +595,7 @@ impl GpuSimulation {
 
         let repose_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Repose Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/repose_deltas.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/repose_deltas.wgsl")).into()),
         });
 
         let repose_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -723,6 +724,12 @@ impl GpuSimulation {
             apply_bgl,
             apply_bind,
         }
+    }
+
+    /// Lightweight keep-alive to service the device without blocking.
+    /// TODO: Not sure if this actually works.
+    pub fn heartbeat(&self) {
+        self.device.poll(wgpu::Maintain::Poll);
     }
 
     pub fn initialize_buffer(&mut self, width: usize, height: usize) {
@@ -909,7 +916,7 @@ impl GpuSimulation {
     /// Adds uniform rainfall to every cell using a compute shader.
     pub fn run_rainfall_step(&mut self, total_cells: usize, sea_level: f32) {
         // Update constants buffer with hex_count and sea_level
-        let constants = [total_cells as f32, sea_level, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32];
+        let constants = [total_cells as f32, sea_level, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32, CONTINENTAL_SHELF_DEPTH];
         self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&constants));
 
         // Determine dispatch size (workgroup_size = 256)

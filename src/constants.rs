@@ -45,6 +45,7 @@ pub const DELTA_SEED_WIDTH: usize = 0;
 // River runs through north desert
 pub const NORTH_DESERT_WIDTH: usize = MAIN_RIVER_WIDTH + DELTA_SEED_WIDTH;
 pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
+pub const COAST_FRINGE: usize = 7;
 pub const NE_BASIN_FRINGE: usize = 4;
 pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN) * NORTH_DESERT_HEIGHT as f32;
 // Rain on the part of the central highland whose east-west extent corresponds to the north desert.
@@ -75,18 +76,23 @@ pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
 pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
 
 pub const KC: f32 = 1.5; // capacity coefficient
-pub const KE: f32 = 0.15; // erosion rate fraction
-// Anything more than about 0.01 will cause weird little pits in lakes.
-// I was hoping fixing rounding errors in the erosion shader would fix this, but it didn't.
-pub const KD: f32 = 0.01; // deposition rate fraction
+pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
+// Experimentally, a KD of 0.01 results in even filling of large lakes.
+// 0.015 results in less even filling and possibly tighter rivers.
+// Too high a value may result in water sloshing back and forth drilling
+// pits in lakes, not sure where the limit is though.
+pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
 
-// TODO: Remove constants associated with the hard-coded river source after fully replacing it with the NE basin.
-// 0.01 hours of average flow through the Aswan Dam.
-pub const RIVER_WATER_PER_STEP: f32 = 0.371; // Feet
 pub const FLOW_FACTOR: f32 = 0.90;
 // Might take 7k-10k rounds to carve out the river valley I want.
 pub const DEFAULT_ROUNDS: u32 = 4_800;
-pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
+// TODO: Might be nice to have two levels of water to display in generated images,
+// a "hex-inch" could represent a river too deep to be forded but only a few tens of
+// feet across (vs. about half a mile for the entire hex). But to mark sea that's
+// readily navigable, you might want a threshold of five or six feet. One foot
+// might work as a compromise (and show where relatively shallow-draft boats can
+// move freely, even if ones with deeper draft couldn't).
+pub const WATER_THRESHOLD: f32 = 1.0; // Feet
 
 
 pub const MAX_SLOPE: f32 = 1.00;

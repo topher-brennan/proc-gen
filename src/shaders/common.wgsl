@@ -1,5 +1,5 @@
 fn height(cell: Hex) -> f32 {
-    return cell.elevation + cell.water_depth + cell.suspended_load;
+    return total_elevation(cell) + cell.water_depth + cell.suspended_load;
 }
 
 fn total_fluid(cell: Hex) -> f32 {
@@ -11,4 +11,8 @@ fn sediment_fraction(cell: Hex) -> f32 {
         return 0.0;
     }
     return cell.suspended_load / total_fluid(cell);
+}
+
+fn total_elevation(cell: Hex) -> f32 {
+    return cell.elevation + cell.elevation_residual;
 }

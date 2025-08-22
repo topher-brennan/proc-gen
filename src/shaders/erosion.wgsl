@@ -5,7 +5,7 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _pad1: f32,
+    rainfall: f32,
     elevation_residual: f32,
 };
 

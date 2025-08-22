@@ -5,8 +5,8 @@ struct Hex {
     elevation: f32,
     water_depth: f32,
     suspended_load: f32,
-    _pad1: f32,
-    _pad2: f32,
+    rainfall: f32,
+    elevation_residual: f32,
 };
 
 struct Outflow {
@@ -56,7 +56,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let fluid_out: f32 = min(height(cell) - params.sea_level, total_fluid(cell));
     water_out = fluid_out * (1.0 - sediment_fraction(cell));
     // TODO: Continue experimenting with turning sediment outflows on/off.
-    if (fluid_out < 0.0 || cell.elevation > -1.0 * params.abyssal_plain_depth) {
+    if (fluid_out < 0.0 || total_elevation(cell) > -1.0 * params.abyssal_plain_depth) {
         sediment_out = fluid_out * sediment_fraction(cell);
     }
 
