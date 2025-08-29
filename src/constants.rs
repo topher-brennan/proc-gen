@@ -45,7 +45,7 @@ pub const DELTA_SEED_WIDTH: usize = 0;
 // River runs through north desert
 pub const NORTH_DESERT_WIDTH: usize = MAIN_RIVER_WIDTH + DELTA_SEED_WIDTH;
 pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
-pub const COAST_FRINGE: usize = 7;
+pub const COAST_FRINGE: usize = 12;
 pub const NE_BASIN_FRINGE: usize = 4;
 pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN) * NORTH_DESERT_HEIGHT as f32;
 // Rain on the part of the central highland whose east-west extent corresponds to the north desert.
@@ -54,7 +54,7 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN + 
 pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 // In real life, continental shelves can extend as little as 50 miles or as much as 310 miles from shore.
-pub const CONTINENTAL_SHELF_WIDTH: usize = (230.0 * 2.0 / HEX_FACTOR) as usize;
+pub const CONTINENTAL_SHELF_WIDTH: usize = (0.0 * 2.0 / HEX_FACTOR) as usize;
 pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
 pub const CONTINENTAL_SHELF_INCREMENT: f32 = CONTINENTAL_SHELF_DEPTH as f32 / CONTINENTAL_SHELF_WIDTH as f32;
 pub const CONTINENTAL_SLOPE_GRADE: f32 = 0.05; // About 3 degrees.

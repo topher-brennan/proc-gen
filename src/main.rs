@@ -767,7 +767,7 @@ fn main() {
                     // Area is oval-shaped, not circular, with the longer axis running east-west.
                     // Experiment with ratio of major axis to minor axis, too long might look weird but too short can result in the river
                     // jumping the tracks, so to speak.
-                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.5, cy2) / (transition_period as f32)).min(1.0);
+                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) * transition_period as f32 / 400.0, cy2) / (transition_period as f32)).min(1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     // Faster transition because it's a less dramatic change.
