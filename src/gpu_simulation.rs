@@ -148,7 +148,7 @@ impl GpuSimulation {
         let mut limits = wgpu::Limits::default();
         // 512 MiB should comfortably cover very large maps while still
         // being supported on most desktop GPUs. The request will be
-        // clamped to the adapter’s true limit automatically.
+        // clamped to the adapter's true limit automatically.
         limits.max_storage_buffer_binding_size = 512 * 1024 * 1024;
         // Keep max_buffer_size in sync so creation also succeeds.
         limits.max_buffer_size = 512 * 1024 * 1024;
@@ -449,7 +449,7 @@ impl GpuSimulation {
 
         // placeholder consts buffer for scatter
         let scatter_consts_buffer = device.create_buffer(&wgpu::BufferDescriptor{
-            label:Some("Scatter Consts"),size: (std::mem::size_of::<[f32;2]>()) as u64,usage:wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,mapped_at_creation:false,
+            label:Some("Scatter Consts"),size: (std::mem::size_of::<[f32;6]>()) as u64,usage:wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,mapped_at_creation:false,
         });
 
         let scatter_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
@@ -487,7 +487,7 @@ impl GpuSimulation {
         let min_neigh_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
             label:Some("min pipe"), layout:Some(&min_layout), module:&min_shader, entry_point:"main"});
         let consts_buf = device.create_buffer(&wgpu::BufferDescriptor{
-            label:Some("min consts"), size:8, usage:BU::UNIFORM|BU::COPY_DST, mapped_at_creation:false});
+            label:Some("min consts"), size:std::mem::size_of::<[f32;2]>() as u64, usage:BU::UNIFORM|BU::COPY_DST, mapped_at_creation:false});
         let min_neigh_bind = device.create_bind_group(&wgpu::BindGroupDescriptor{
             label:Some("min BG"), layout:&min_bgl, entries:&[
                 bg_entry!(0,&hex_buffer),
@@ -913,70 +913,6 @@ impl GpuSimulation {
         result
     }
 
-    /// Adds uniform rainfall to every cell using a compute shader.
-    pub fn run_rainfall_step(&mut self, total_cells: usize, sea_level: f32) {
-        // Update constants buffer with hex_count and sea_level
-        let constants = [total_cells as f32, sea_level, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32, CONTINENTAL_SHELF_DEPTH];
-        self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&constants));
-
-        // Determine dispatch size (workgroup_size = 256)
-        let workgroup_size: u32 = 256;
-        let dispatch_x = ((total_cells as u32) + workgroup_size - 1) / workgroup_size;
-
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Rainfall Encoder"),
-        });
-
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Rainfall Pass"),
-            });
-
-            cpass.set_pipeline(&self.rainfall_pipeline);
-            cpass.set_bind_group(0, &self.rainfall_bind_group, &[]);
-            cpass.dispatch_workgroups(dispatch_x, 1, 1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    /// Run water routing kernel and leave results in next buffers. Optionally download.
-    pub fn run_water_routing_step(&mut self, width: usize, height: usize, flow_factor: f32, max_flow: f32) {
-        let consts = [width as f32, height as f32, flow_factor, max_flow];
-        self.queue.write_buffer(&self.routing_constants_buffer, 0, bytemuck::cast_slice(&consts));
-
-        let workgroup_size: u32 = 256;
-        let total = (width*height) as u32;
-        let dispatch_x = (total + workgroup_size -1)/workgroup_size;
-
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("Routing Encoder")});
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("Routing Pass")});
-            cpass.set_pipeline(&self.routing_pipeline);
-            cpass.set_bind_group(0,&self.routing_bind_group,&[]);
-            cpass.dispatch_workgroups(dispatch_x,1,1);
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    pub fn run_scatter_step(&mut self, width: usize, height: usize) {
-        // update scatter consts buffer
-        let consts = [width as f32, height as f32];
-        self.queue.write_buffer(&self.scatter_consts_buffer,0,bytemuck::cast_slice(&consts));
-
-        let total = (width*height) as u32;
-        let workgroup = 256u32;
-        let dispatch = (total + workgroup -1)/workgroup;
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("Scatter Enc")});
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("Scatter Pass")});
-            cpass.set_pipeline(&self.scatter_pipeline);
-            cpass.set_bind_group(0,&self.scatter_bind_group,&[]);
-            cpass.dispatch_workgroups(dispatch,1,1);
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
     // --------------------------------------------------------------
     // New helpers for min-neighbour + erosion GPU passes
     // --------------------------------------------------------------
@@ -1011,24 +947,6 @@ impl GpuSimulation {
                 bg_entry!(3,&self.erosion_log_buffer),
             ],
         });
-    }
-
-    /// Compute minimum neighbour elevation (one pass).
-    pub fn run_min_neigh_step(&self, width: usize, height: usize) {
-        let consts = [width as f32, height as f32];
-        self.queue.write_buffer(&self.min_consts_buf, 0, bytemuck::cast_slice(&consts));
-        let total = (width * height) as u32;
-        let groups = (total + 255) / 256;
-        dispatch_compute!(self.device, self.queue, self.min_neigh_pipeline, self.min_neigh_bind, groups);
-    }
-
-    /// Run erosion/deposition per cell.
-    pub fn run_erosion_step(&self, width: usize, height: usize) {
-        let params: [f32; 6] = [KC, KE, KD, MAX_SLOPE, MAX_ELEVATION, HEX_SIZE];
-        self.queue.write_buffer(&self.erosion_params, 0, bytemuck::cast_slice(&params));
-        let total = (width * height) as u32;
-        let groups = (total + 255) / 256;
-        dispatch_compute!(self.device, self.queue, self.erosion_pipeline, self.erosion_bind, groups);
     }
 
     pub fn download_ocean_outflows(&self, height: usize) -> Vec<OutGpu> {
@@ -1077,28 +995,6 @@ impl GpuSimulation {
         vec
     }
 
-    /// Run ocean boundary compute pass without reading data back to the CPU.
-    /// This is significantly faster and should be used in the tight simulation loop.
-    pub fn run_ocean_boundary(&mut self, width: usize, height: usize, sea_level: f32) {
-        // Update params buffer: [sea_level, height, width, pad]
-        let params = [sea_level, height as f32, width as f32, ABYSSAL_PLAINS_MAX_DEPTH];
-        self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&params));
-
-        // Dispatch compute – one thread per row along west edge
-        let total_invocations = height as u32;
-        let workgroup = 256u32;
-        let dispatch_x = (total_invocations + workgroup - 1) / workgroup;
-
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Ocean Boundary Encoder") });
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Ocean Boundary Pass") });
-            cpass.set_pipeline(&self.ocean_pipeline);
-            cpass.set_bind_group(0, &self.ocean_bind_group, &[]);
-            cpass.dispatch_workgroups(dispatch_x, 1, 1);
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
     /// Enforce angle-of-repose by two-pass delta approach.
     pub fn run_repose_step(&mut self, width: usize, height: usize) {
         // Write constants for repose_deltas shader: [width,height,HEX_SIZE]
@@ -1128,5 +1024,134 @@ impl GpuSimulation {
 
     pub fn download_hex_data(&self) -> Vec<HexGpu> {
         self.download_data()
+    }
+
+    /// Run all simulation steps in a single batched command encoder for better performance.
+    /// This replaces the individual run_*_step calls with a single optimized submission.
+    pub fn run_simulation_step_batched(&mut self, width: usize, height: usize, sea_level: f32, flow_factor: f32, max_flow: f32) {
+        // Update all constant buffers first
+        let total_cells = width * height;
+        
+        // Rainfall constants
+        let rain_constants = [total_cells as f32, sea_level, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32, CONTINENTAL_SHELF_DEPTH];
+        self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&rain_constants));
+        
+        // Water routing constants
+        let routing_constants = [width as f32, height as f32, flow_factor, max_flow];
+        self.queue.write_buffer(&self.routing_constants_buffer, 0, bytemuck::cast_slice(&routing_constants));
+        
+        // Scatter constants - only write 2 f32s as the buffer was created for [f32; 2]
+        let scatter_constants = [width as f32, height as f32];
+        self.queue.write_buffer(&self.scatter_consts_buffer, 0, bytemuck::cast_slice(&scatter_constants));
+        
+        // Min neighbor constants
+        let min_constants = [width as f32, height as f32];
+        self.queue.write_buffer(&self.min_consts_buf, 0, bytemuck::cast_slice(&min_constants));
+        
+        // Erosion parameters
+        let erosion_params: [f32; 6] = [KC, KE, KD, MAX_SLOPE, MAX_ELEVATION, HEX_SIZE];
+        self.queue.write_buffer(&self.erosion_params, 0, bytemuck::cast_slice(&erosion_params));
+        
+        // Ocean boundary parameters
+        let ocean_params = [sea_level, height as f32, width as f32, ABYSSAL_PLAINS_MAX_DEPTH];
+        self.queue.write_buffer(&self.ocean_params_buffer, 0, bytemuck::cast_slice(&ocean_params));
+        
+        // Repose constants
+        let repose_consts = [width as f32, height as f32, HEX_SIZE];
+        self.queue.write_buffer(&self.repose_consts_buf, 0, bytemuck::cast_slice(&repose_consts));
+
+        // Calculate dispatch sizes
+        let workgroup_size: u32 = 256;
+        let total = (width * height) as u32;
+        let dispatch_x = (total + workgroup_size - 1) / workgroup_size;
+        let ocean_dispatch = (height as u32 + workgroup_size - 1) / workgroup_size;
+
+        // Create single command encoder for all passes
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Batched Simulation Encoder"),
+        });
+
+        // 1. Rainfall pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Rainfall Pass"),
+            });
+            pass.set_pipeline(&self.rainfall_pipeline);
+            pass.set_bind_group(0, &self.rainfall_bind_group, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 2. Min neighbor pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Min Neighbor Pass"),
+            });
+            pass.set_pipeline(&self.min_neigh_pipeline);
+            pass.set_bind_group(0, &self.min_neigh_bind, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 3. Erosion pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Erosion Pass"),
+            });
+            pass.set_pipeline(&self.erosion_pipeline);
+            pass.set_bind_group(0, &self.erosion_bind, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 4. Water routing pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Water Routing Pass"),
+            });
+            pass.set_pipeline(&self.routing_pipeline);
+            pass.set_bind_group(0, &self.routing_bind_group, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 5. Scatter pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Scatter Pass"),
+            });
+            pass.set_pipeline(&self.scatter_pipeline);
+            pass.set_bind_group(0, &self.scatter_bind_group, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 6. Repose deltas pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Repose Deltas Pass"),
+            });
+            pass.set_pipeline(&self.repose_pipeline);
+            pass.set_bind_group(0, &self.repose_bind, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 7. Apply deltas pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Apply Deltas Pass"),
+            });
+            pass.set_pipeline(&self.apply_pipeline);
+            pass.set_bind_group(0, &self.apply_bind, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 8. Ocean boundary pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ocean Boundary Pass"),
+            });
+            pass.set_pipeline(&self.ocean_pipeline);
+            pass.set_bind_group(0, &self.ocean_bind_group, &[]);
+            pass.dispatch_workgroups(ocean_dispatch, 1, 1);
+        }
+
+        // Submit all passes at once
+        self.queue.submit(std::iter::once(encoder.finish()));
     }
 }

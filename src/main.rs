@@ -316,14 +316,9 @@ fn simulate_rainfall(
     );
 
     for step in 0..steps {
-        // Mass balance stats per step
-        let mut step_outflow = 0.0f32;
-        let mut step_sediment_in = 0.0f32;
-        let mut step_sediment_out = 0.0f32;
-
         // Map's dimensions define what constitutes a "round", since it determines how long it takes
         // for changes on one side of the map to propagate to the other.
-        if step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS) == 0 {
+        if step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS / 1000) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -473,35 +468,7 @@ fn simulate_rainfall(
             gpu_sim.heartbeat();
         }
 
-        gpu_sim.run_rainfall_step(width * height, current_sea_level);
-        
-
-        // if step % 100 == 0 {
-        //     print_elevation_and_sediment(&gpu_sim, "new step");
-        // }
-
-        // GPU min-slope + erosion/deposition passes
-        gpu_sim.run_min_neigh_step(width, height);
-        gpu_sim.run_erosion_step(width, height);
-
-        // print_elevation_and_sediment(&gpu_sim, "min-slope + erosion/deposition");
-
-        // GPU water routing
-        gpu_sim.run_water_routing_step(width, height, FLOW_FACTOR, MAX_FLOW);
-
-        // print_elevation_and_sediment(&gpu_sim, "water routing");
-
-        gpu_sim.run_scatter_step(width, height);
-
-        // print_elevation_and_sediment(&gpu_sim, "scatter");
-
-        gpu_sim.run_repose_step(width, height);
-
-        // print_elevation_and_sediment(&gpu_sim, "repose");
-        // println!("--------------------------------");
-
-        // Apply ocean boundary
-        gpu_sim.run_ocean_boundary(width, height, current_sea_level);
+        gpu_sim.run_simulation_step_batched(width, height, current_sea_level, FLOW_FACTOR, MAX_FLOW);
     }
 
     download_hex_data(&gpu_sim, hex_map);
