@@ -315,7 +315,7 @@ fn simulate_rainfall(
         river_outlet_x
     );
 
-    for _step in 0..steps {
+    for step in 0..steps {
         // Mass balance stats per step
         let mut step_outflow = 0.0f32;
         let mut step_sediment_in = 0.0f32;
@@ -323,7 +323,7 @@ fn simulate_rainfall(
 
         // Map's dimensions define what constitutes a "round", since it determines how long it takes
         // for changes on one side of the map to propagate to the other.
-        if _step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS) == 0 {
+        if step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -391,7 +391,7 @@ fn simulate_rainfall(
             //     current_sea_level = target_delta_hex.elevation - target_delta_hex.water_depth;
             // }
 
-            let round = _step / (WIDTH_HEXAGONS as u32);
+            let round = step / (WIDTH_HEXAGONS as u32);
 
             let (min_elevation, max_elevation) = hex_map.par_iter().map(|row| {
                 let mut row_min = f32::INFINITY;
@@ -462,7 +462,7 @@ fn simulate_rainfall(
             save_buffer_png("terrain_water.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
             render_frame(hex_map, &mut frame_buffer, current_sea_level, false);
-            if _step == 0 {
+            if step == 0 {
                 // For checking for weird behavior as erosion progresses.
                 save_buffer_png("terrain_initial.png", &frame_buffer, WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
             } else {
@@ -476,7 +476,7 @@ fn simulate_rainfall(
         gpu_sim.run_rainfall_step(width * height, current_sea_level);
         
 
-        // if _step % 100 == 0 {
+        // if step % 100 == 0 {
         //     print_elevation_and_sediment(&gpu_sim, "new step");
         // }
 
@@ -737,7 +737,7 @@ fn main() {
         let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
         let sea_deviation = get_sea_deviation(&perlin, y as f64, HEIGHT_PIXELS as f64 / 1.5);
         let shelf_deviation = get_sea_deviation(&perlin, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
-        let cut_factor = -0.05 - get_perlin_noise(&perlin, (y + HEIGHT_PIXELS * 5 / 2) as f64, HEIGHT_PIXELS as f64 / 1.5) * 0.05;
+        let cut_factor = -0.06 - get_perlin_noise(&perlin, (y + HEIGHT_PIXELS * 5 / 2) as f64, HEIGHT_PIXELS as f64 / 1.5) * 0.06;
 
         for x in 0..WIDTH_HEXAGONS {
             let mut elevation = 0.0;
@@ -767,7 +767,7 @@ fn main() {
                     // Area is oval-shaped, not circular, with the longer axis running east-west.
                     // Experiment with ratio of major axis to minor axis, too long might look weird but too short can result in the river
                     // jumping the tracks, so to speak.
-                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) * transition_period as f32 / 400.0, cy2) / (transition_period as f32)).min(1.0);
+                    let factor = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2) / (transition_period as f32)).min(1.0);
                     elevation = perlin_noise * NORTH_DESERT_MAX_ELEVATION * factor;
                 } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     // Faster transition because it's a less dramatic change.
@@ -781,11 +781,11 @@ fn main() {
                 if deviated_y < RIVER_Y - (transition_period) as usize {
                     // This is to prevent the river outlet from being too far north.
                     let factor = ((RIVER_Y as f32 - transition_period as f32 * 2.0 - deviated_y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
-                    elevation = perlin_noise * adj_north_desert_max_elevation + (1.0 - perlin_noise) * adj_north_desert_max_elevation * (1.0 - factor) * 0.25;
+                    elevation = perlin_noise * adj_north_desert_max_elevation + (1.0 - perlin_noise) * adj_north_desert_max_elevation * (1.0 - factor) * 0.3;
                 } else if deviated_y < NORTH_DESERT_HEIGHT + transition_period as usize {
                     // Similarly this makes sure the river isn't too far south.
                     let factor = ((NORTH_DESERT_HEIGHT as f32 - deviated_y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
-                    elevation += (1.0 - perlin_noise) * (adj_central_highland_max_elevation * 0.25) * (1.0 - factor);
+                    elevation += (1.0 - perlin_noise) * (adj_central_highland_max_elevation * 0.3) * (1.0 - factor);
                 }
             }
 

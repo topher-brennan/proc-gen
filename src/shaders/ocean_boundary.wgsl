@@ -38,6 +38,7 @@ var<storage, read_write> out_data: array<Outflow>;
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let y = global_id.x;
 
+    // TODO: Consider letting water flow off south edge
     // Exit if this invocation is for a cell outside the map's height
     if (y >= u32(params.height)) {
         return;
