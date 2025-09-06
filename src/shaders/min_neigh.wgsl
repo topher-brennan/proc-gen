@@ -40,8 +40,8 @@ fn idx(x:i32, y:i32) -> u32 {
 }
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-    let index = gid.x;
+fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+    let index = global_id.x;
     let total = u32(C.width * C.height);
     if (index >= total) { return; }
 

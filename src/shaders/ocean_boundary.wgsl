@@ -44,7 +44,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // Compute linear index for west-edge cell at row y: idx = y * width + 0
+    // Compute linear index for west-edge cell at row y: index = y * width + 0
     let index = y * u32(params.width);
 
     var cell = hex_data[index];
