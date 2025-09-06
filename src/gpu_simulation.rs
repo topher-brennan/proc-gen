@@ -1001,8 +1001,9 @@ impl GpuSimulation {
         let consts = [width as f32, height as f32, HEX_SIZE];
         self.queue.write_buffer(&self.repose_consts_buf, 0, bytemuck::cast_slice(&consts));
 
+        let workgroup_size: u32 = 8192;
         let total = (width * height) as u32;
-        let groups = (total + 255) / 256;
+        let groups = (total + workgroup_size - 1) / workgroup_size;
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("ReposeEncoder")});
         {
@@ -1061,7 +1062,7 @@ impl GpuSimulation {
         self.queue.write_buffer(&self.repose_consts_buf, 0, bytemuck::cast_slice(&repose_consts));
 
         // Calculate dispatch sizes
-        let workgroup_size: u32 = 256;
+        let workgroup_size: u32 = 8192;
         let total = (width * height) as u32;
         let dispatch_x = (total + workgroup_size - 1) / workgroup_size;
         let ocean_dispatch = (height as u32 + workgroup_size - 1) / workgroup_size;

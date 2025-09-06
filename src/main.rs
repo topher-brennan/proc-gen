@@ -245,6 +245,8 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
 
     // TODO: Keep an eye on whether 20 iterations is enough.
     for _ in 0..20 {
+        // This is the only place this function is called,
+        // may create opportunities for refactoring.
         gpu_sim.run_repose_step(width, height);
     }
 
@@ -318,7 +320,7 @@ fn simulate_rainfall(
     for step in 0..steps {
         // Map's dimensions define what constitutes a "round", since it determines how long it takes
         // for changes on one side of the map to propagate to the other.
-        if step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS / 1000) == 0 {
+        if step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS) == 0 {
             // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
