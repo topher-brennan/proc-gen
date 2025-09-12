@@ -109,14 +109,14 @@ pub struct GpuSimulation {
     min_layout: wgpu::BindGroupLayout,
     min_consts_buf: wgpu::Buffer,
     eros_layout: wgpu::BindGroupLayout,
-    // --- ocean boundary resources ---
+    // Ocean boundary resources
     ocean_pipeline: wgpu::ComputePipeline,
     ocean_bind_group_layout: wgpu::BindGroupLayout,
     ocean_bind_group: wgpu::BindGroup,
     ocean_params_buffer: wgpu::Buffer,
     ocean_out_buffer: wgpu::Buffer,
     erosion_log_buffer: wgpu::Buffer,
-    // --- repose (angle-of-repose) resources ---
+    // Repose (angle-of-repose) resources
     delta_buffer: wgpu::Buffer,
     repose_pipeline: wgpu::ComputePipeline,
     repose_bgl: wgpu::BindGroupLayout,
@@ -136,7 +136,7 @@ impl GpuSimulation {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                // Or just use default?
+                // TODO: experiment with just using default()?
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
@@ -144,13 +144,8 @@ impl GpuSimulation {
             .await
             .expect("Failed to find an appropriate adapter");
 
-        // Increase limits to allow large storage buffers (>128 MiB)
         let mut limits = wgpu::Limits::default();
-        // 512 MiB should comfortably cover very large maps while still
-        // being supported on most desktop GPUs. The request will be
-        // clamped to the adapter's true limit automatically.
         limits.max_storage_buffer_binding_size = 512 * 1024 * 1024;
-        // Keep max_buffer_size in sync so creation also succeeds.
         limits.max_buffer_size = 512 * 1024 * 1024;
 
         let (device, queue) = adapter
@@ -165,16 +160,11 @@ impl GpuSimulation {
             .await
             .expect("Failed to create device");
 
-        // --------------------------------------------------
-        // Generic placeholder compute shader (currently does
-        // a simple rainfall increment; kept for compatibility)
-        // --------------------------------------------------
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("simulation.wgsl"))),
         });
 
-        // Create bind group layout
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind Group Layout"),
             entries: &[
@@ -191,7 +181,6 @@ impl GpuSimulation {
             ],
         });
 
-        // Create compute pipeline
         let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Compute Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
@@ -205,10 +194,7 @@ impl GpuSimulation {
             entry_point: "main",
         });
 
-        // --------------------------------------------------
-        // Rainfall pipeline (uniform + hex storage buffer)
-        // --------------------------------------------------
-
+        // Rainfall pipeline
         let rainfall_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Rainfall Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/rainfall.wgsl")))),
@@ -255,10 +241,7 @@ impl GpuSimulation {
             entry_point: "add_rainfall",
         });
 
-        // --------------------------------------------------
-        // Water routing pipeline (uses separate buffers)
-        // --------------------------------------------------
-
+        // Water routing pipeline
         let routing_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Water Routing Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/water_routing.wgsl")))),
@@ -338,7 +321,7 @@ impl GpuSimulation {
             entry_point: "route_water",
         });
 
-        // ---------------- Scatter pipeline ---------------------------
+        // Scatter pipeline
         let scatter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Scatter Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/scatter_water.wgsl")))),
@@ -383,7 +366,7 @@ impl GpuSimulation {
 
         let next_water_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Next Water Buffer"),
-            size: 4, // placeholder 1 f32
+            size: 4,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -421,7 +404,6 @@ impl GpuSimulation {
             ],
         });
 
-        // Create rainfall bind group (will be recreated in initialize_buffer)
         let rainfall_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Rainfall Bind Group"),
             layout: &rainfall_bind_group_layout,
@@ -585,7 +567,7 @@ impl GpuSimulation {
             ],
         });
 
-        // ---- repose (angle-of-repose) resources ----
+        // repose (angle-of-repose) resources
         let delta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Delta Buffer"),
             size: 4, // placeholder, resized later
@@ -743,6 +725,7 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
+        // TODO: Re-examine some of this stuff with recreating bind groups and resizing stuff.
         // Recreate bind group with new buffer
         self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Bind Group"),
@@ -817,7 +800,7 @@ impl GpuSimulation {
             ],
         });
 
-        // --- Resize ocean out buffer and bind group ---
+        // Resize ocean out buffer and bind group
         self.ocean_out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Ocean Out Buffer"),
             size: (height * std::mem::size_of::<OutGpu>()) as u64,
@@ -825,7 +808,7 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
-        // --- Resize erosion log buffer ---
+        // Resize erosion log buffer
         self.erosion_log_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Erosion Log Buffer"),
             size: (width * height * std::mem::size_of::<[f32;4]>()) as u64,
@@ -913,11 +896,8 @@ impl GpuSimulation {
         result
     }
 
-    // --------------------------------------------------------------
-    // New helpers for min-neighbour + erosion GPU passes
-    // --------------------------------------------------------------
-
-    /// Resize the min_elev_buffer (call after initialize_buffer).
+    // Helpers for min-neighbour + erosion GPU passes
+    // Resize the min_elev_buffer (call after initialize_buffer).
     pub fn resize_min_buffers(&mut self, width: usize, height: usize) {
         let size = (width * height * std::mem::size_of::<f32>()) as u64;
         self.min_elev_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -995,9 +975,8 @@ impl GpuSimulation {
         vec
     }
 
-    /// Enforce angle-of-repose by two-pass delta approach.
+    // TODO: Only used in let_slopes_settle, seems ripe for refactoring.
     pub fn run_repose_step(&mut self, width: usize, height: usize) {
-        // Write constants for repose_deltas shader: [width,height,HEX_SIZE]
         let consts = [width as f32, height as f32, HEX_SIZE];
         self.queue.write_buffer(&self.repose_consts_buf, 0, bytemuck::cast_slice(&consts));
 
@@ -1007,14 +986,12 @@ impl GpuSimulation {
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("ReposeEncoder")});
         {
-            // Pass 1: compute deltas with atomics
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("ReposeDeltasPass")});
             pass.set_pipeline(&self.repose_pipeline);
             pass.set_bind_group(0, &self.repose_bind, &[]);
             pass.dispatch_workgroups(groups,1,1);
         }
         {
-            // Pass 2: apply deltas
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("ApplyDeltasPass")});
             pass.set_pipeline(&self.apply_pipeline);
             pass.set_bind_group(0, &self.apply_bind, &[]);
@@ -1027,8 +1004,7 @@ impl GpuSimulation {
         self.download_data()
     }
 
-    /// Run all simulation steps in a single batched command encoder for better performance.
-    /// This replaces the individual run_*_step calls with a single optimized submission.
+    // Run all simulation steps in a single batched command encoder
     pub fn run_simulation_step_batched(&mut self, width: usize, height: usize, sea_level: f32, flow_factor: f32, max_flow: f32) {
         // Update all constant buffers first
         let total_cells = width * height;

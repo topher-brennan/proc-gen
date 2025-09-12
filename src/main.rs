@@ -30,7 +30,7 @@ impl Ord for FloodItem {
 }
 impl PartialOrd for FloodItem { fn partial_cmp(&self, o:&Self)->Option<Ordering>{ Some(self.cmp(o)) } }
 
-/// Fill all closed basins so initial free-water surface can drain to sea level.
+// Prefill basins with water
 fn prefill_basins(hex_map: &mut Vec<Vec<Hex>>) {
     let height = hex_map.len();
     let width  = hex_map[0].len();
@@ -71,28 +71,23 @@ fn prefill_basins(hex_map: &mut Vec<Vec<Hex>>) {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Neighbour offsets for axial "columns-lined" hex layout
-// -----------------------------------------------------------------------------
-// Even and odd columns have mirrored vertical diagonals.
-// We store them once to avoid repeat allocation in tight loops.
-
+// Neighbor offsets for "columns-lined" hex layout
 const NEIGH_OFFSETS_EVEN: [(i16, i16); 6] = [
-    (1, 0),  // 4 o'clock (east)
-    (0, 1),  // 6 o'clock (south)
-    (-1, 0), // 8 o'clock (west)
-    (0, -1), // 12 o'clock (north)
-    (-1, -1),// 10 o'clock (north-west)
-    (1, -1), // 2 o'clock (north-east)
+    (1, 0),  // 4 o'clock
+    (0, 1),  // 6 o'clock
+    (-1, 0), // 8 o'clock
+    (0, -1), // 12 o'clock
+    (-1, -1),// 10 o'clock
+    (1, -1), // 2 o'clock
 ];
 
 const NEIGH_OFFSETS_ODD: [(i16, i16); 6] = [
-    (1, 0),  // 2 o'clock (east)
-    (0, 1),  // 6 o'clock (south)
-    (-1, 0), // 10 o'clock (west)
-    (0, -1), // 12 o'clock (north)
-    (-1, 1), // 8 o'clock (south-west)
-    (1, 1),  // 4 o'clock (south-east)
+    (1, 0),  // 2 o'clock
+    (0, 1),  // 6 o'clock
+    (-1, 0), // 10 o'clock
+    (0, -1), // 12 o'clock
+    (-1, 1), // 8 o'clock
+    (1, 1),  // 4 o'clock
 ];
 
 struct Hex {
@@ -172,8 +167,6 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
             let green = (127.0 + 128.0 * (1.0 - factor)) as u8; // 255→127
             let blue  = 0;
             Rgb([red, green, blue])
-        // TODO: The later stages of this transition don't subjectively look right to me,
-        // is there some standard way to do this?
         } else if normalized_height < 0.5 {
             // Orange (255,127,0) to Red (255,0,0)
             let factor = (normalized_height - 0.3) / 0.2; // 0..1
@@ -190,8 +183,6 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
             Rgb([red, green, blue])
         } else {
             // Brown to white
-            // TODO: Very confused why I end up needing to clamp twice, at least it finally
-            // made the magenta go away.
             let factor = ((normalized_height - 0.7) / 0.3).clamp(0.0, 1.0);
             let red = 62 + (193.0 * factor) as u8; // 62→255
             let green = 28 + ((237.0 * factor) as u8).clamp(0, 255 - 28);
@@ -243,8 +234,7 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
 
     upload_hex_data(hex_map, &gpu_sim);
 
-    // TODO: Keep an eye on whether 20 iterations is enough.
-    for _ in 0..20 {
+    for _ in 0..10 {
         // This is the only place this function is called,
         // may create opportunities for refactoring.
         gpu_sim.run_repose_step(width, height);
@@ -267,7 +257,7 @@ fn fill_sea(hex_map: &mut Vec<Vec<Hex>>) {
     }
 }
 
-fn simulate_rainfall(
+fn simulate_erosion(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
     river_outlet_x: usize,
@@ -277,9 +267,6 @@ fn simulate_rainfall(
     let height = HEIGHT_PIXELS as usize;
     let width = WIDTH_HEXAGONS as usize;
 
-    // ---------------------------------------------------------
-    // GPU helper initialisation (only used for rainfall phase)
-    // ---------------------------------------------------------
     let mut gpu_sim = pollster::block_on(GpuSimulation::new());
     gpu_sim.initialize_buffer(width, height);
     gpu_sim.resize_min_buffers(width, height);
@@ -321,7 +308,6 @@ fn simulate_rainfall(
         // Map's dimensions define what constitutes a "round", since it determines how long it takes
         // for changes on one side of the map to propagate to the other.
         if step % (WIDTH_HEXAGONS.max(HEIGHT_PIXELS) as u32 * LOG_ROUNDS / 1000) == 0 {
-            // Download hex data after all GPU passes for CPU-side logic
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
                 let y = idx / width;
@@ -509,7 +495,6 @@ fn simulate_rainfall(
         .map(|h| h.water_depth as f64)
         .sum();
 
-    // Experimenting with h.elevation > current_sea_level or h.water_depth <= WATER_THRESHOLD.
     let westernmost_land_hex = hex_map.par_iter().map(|row| {
         row.iter().filter(|h| h.water_depth <= WATER_THRESHOLD).min_by_key(|h| h.coordinate.0)
     }).flatten().min_by_key(|h| h.coordinate.0);
@@ -569,7 +554,6 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
 }
 
 fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) {
-    // Create the visualization image
     let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
     
     // For each pixel, find the nearest hex and use its elevation
@@ -609,9 +593,8 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], sea_level: f32, sho
             let hex_y = hex_y.min(HEIGHT_PIXELS - 1);
 
             let hex = &hex_map[hex_y as usize][hex_x as usize];
-            // Choose colour – highlight water depth strongly so it stands out
             let color = if show_water && hex.water_depth > WATER_THRESHOLD {
-                // Strong blue for water for debugging
+                // TODO: Varying shades of blue?
                 let blue = 255u8;
                 let g = 0u8;
                 let r = 0u8;
@@ -667,7 +650,6 @@ fn get_rainfall(rain_class: i32) -> f32 {
         2 => MEDIUM_RAIN,
         3 => HIGH_RAIN,
         4 => VERY_HIGH_RAIN,
-        // default error case
         _ => 0.0,
     }
 }
@@ -715,8 +697,7 @@ fn main() {
             let y_deviation = land_deviation_for_outlet - get_land_deviation(&perlin, x as f64, y as f64, 96.0);
             let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
 
-            // TODO: Continental probably shouldn't exactly follow coastline. In fact it would be cool if the god-knife-carving-out-the-coastline
-            // thing I've got going on cut into the continental shelf.
+
             if x + shelf_deviation < ABYSSAL_PLAINS_WIDTH {
                 elevation = -1.0 * ABYSSAL_PLAINS_MIN_DEPTH - (ABYSSAL_PLAINS_WIDTH - (x + shelf_deviation)) as f32 * ABYSSAL_PLAINS_INCREMENT;
             } else if x + shelf_deviation >= ABYSSAL_PLAINS_WIDTH && x + shelf_deviation < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
@@ -791,7 +772,6 @@ fn main() {
                 elevation += rng.gen_range(0.0..0.01) * elevation.max(HEX_SIZE as f32);
             }
 
-            // TODO: Rain code needs to be more gradual, becomes too obvious in erosion patterns. Could use a relatively small "fringe" constant, like 6 or 7 hexes.
             let mut rainfall = 0.0;
 
             if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
@@ -841,12 +821,14 @@ fn main() {
 
     let_slopes_settle(&mut hex_map);
     fill_sea(&mut hex_map);
+    // Note: prefilling basins doesn't play so well with evaporation,
+    // hence why it's currently commented out.
     // prefill_basins(&mut hex_map);
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
     let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
-    let final_sea_level = simulate_rainfall(&mut hex_map, total_steps, river_outlet_x);
+    let final_sea_level = simulate_erosion(&mut hex_map, total_steps, river_outlet_x);
 
     // TODO: This isn't working, should fix.
     // Count final blue pixels for quick sanity check
