@@ -684,7 +684,6 @@ fn main() {
 
     let mut hex_map = Vec::new();
     let mut rng = rand::thread_rng();
-    let seed = rng.gen_range(0..u32::MAX);
 
     println!("Seed: {}", seed);
 
