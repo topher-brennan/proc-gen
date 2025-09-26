@@ -14,3 +14,4 @@ bytemuck = { version = "1.13", features = ["derive"] }
 pollster = "0.3"
 futures-intrusive = "0.4"
 noise = "0.9"
+clap = { version = "4.4", features = ["derive"] }

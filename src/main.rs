@@ -11,6 +11,20 @@ use constants::*;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use noise::{NoiseFn, Perlin};
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "proc-gen")]
+#[command(about = "A procedural terrain generation simulation")]
+struct Args {
+    /// Number of simulation rounds to run
+    #[arg(long, default_value_t = DEFAULT_ROUNDS)]
+    rounds: u32,
+    
+    /// Random seed for terrain generation
+    #[arg(long)]
+    seed: Option<u32>,
+}
 
 #[derive(Copy, Clone)]
 struct FloodItem {
@@ -655,12 +669,13 @@ fn get_rainfall(rain_class: i32) -> f32 {
 }
 
 fn main() {
-    // Allow user to override number of rounds via command-line: first positional arg is rounds,
-    // e.g. `$env:RUST_BACKTRACE=1; cargo run --release -- 24000`
-    let rounds: u32 = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(DEFAULT_ROUNDS);
+    let args = Args::parse();
+    
+    let rounds = args.rounds;
+    let seed = args.seed.unwrap_or_else(|| {
+        let mut rng = rand::thread_rng();
+        rng.gen_range(0..u32::MAX)
+    });
 
     let elevation_adjustment = rounds as f32 / 60_000.0 as f32;
     let adj_south_mountains_max_elevation = SOUTH_MOUNTAINS_MAX_ELEVATION * (1.0 + elevation_adjustment);
