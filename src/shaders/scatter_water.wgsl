@@ -13,7 +13,9 @@ var<storage, read_write> out_water: array<f32>;
 @group(0) @binding(2)
 var<storage, read_write> out_load: array<f32>;
 @group(0) @binding(3)
-var<storage, read> tgt_buffer: array<u32>;
+var<storage, read> tgt_buffer: array<vec4<u32>>;
+@group(0) @binding(5)
+var<storage, read> flow_fractions: array<vec4<f32>>;
 
 struct Constants {
     width: f32,
@@ -84,9 +86,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let nx = x + off.x; let ny = y + off.y;
         if(!valid(nx,ny)){continue;}
         let n_idx = idx(nx,ny);
-        if(tgt_buffer[n_idx]==index){
-            new_water += out_water[n_idx];
-            new_load += out_load[n_idx];
+        if(tgt_buffer[n_idx].x == index){
+            new_water += out_water[n_idx] * flow_fractions[n_idx].x;
+            new_load += out_load[n_idx] * flow_fractions[n_idx].x;
         }
     }
 

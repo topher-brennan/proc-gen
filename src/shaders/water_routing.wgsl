@@ -16,7 +16,10 @@ var<storage, read_write> next_water: array<f32>;
 var<storage, read_write> next_load: array<f32>;
 
 @group(0) @binding(3)
-var<storage, read_write> tgt_buffer: array<u32>;
+var<storage, read_write> tgt_buffer: array<vec4<u32>>;
+
+@group(0) @binding(5)
+var<storage, read_write> flow_fractions: array<vec4<f32>>;
 
 struct Constants {
     width: f32,
@@ -82,7 +85,8 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (f <= 0.0) {
         next_water[index] = 0.0;
         next_load[index] = 0.0;
-        tgt_buffer[index]  = NO_TARGET;
+        tgt_buffer[index]  = vec4<u32>(NO_TARGET, NO_TARGET, NO_TARGET, NO_TARGET);
+        flow_fractions[index] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         return;
     }
     
@@ -154,15 +158,18 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (move_f > 0.0) {
             next_water[index] = (1.0 - sediment_fraction(hex)) * move_f;
             next_load[index] = sediment_fraction(hex) * move_f;
-            tgt_buffer[index]  = target_index;
+            tgt_buffer[index].x = target_index;
+            flow_fractions[index].x = 1.0;  // 100% flow to first target
         } else {
             next_water[index] = 0.0;
             next_load[index] = 0.0;
-            tgt_buffer[index]  = NO_TARGET;
+            tgt_buffer[index]  = vec4<u32>(NO_TARGET, NO_TARGET, NO_TARGET, NO_TARGET);
+            flow_fractions[index] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         }
     } else {
         next_water[index] = 0.0;
         next_load[index] = 0.0;
-        tgt_buffer[index] = NO_TARGET;
+        tgt_buffer[index] = vec4<u32>(NO_TARGET, NO_TARGET, NO_TARGET, NO_TARGET);
+        flow_fractions[index] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 } 
