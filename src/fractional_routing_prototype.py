@@ -10,6 +10,8 @@ TEST_CASES = [
     [(10.0, 0.0), (10.0, 0.0), (20.0, 0.0), (20.0, 0.0), (20.0, 0.0), (20.0, 0.0)], # [4.5, 4.5, 0.0, 0.0, 0.0, 0.0]
     [(10.0, 0.0), (12.0, 0.0), (20.0, 0.0), (20.0, 0.0), (20.0, 0.0), (20.0, 0.0)], # [5.5, 3.5, 0.0, 0.0, 0.0, 0.0]
     [(5.0, 0.0), (5.0, 0.0), (20.0, 0.0), (20.0, 0.0), (20.0, 0.0), (20.0, 0.0)], # [5.0, 5.0, 0.0, 0.0, 0.0, 0.0]
+    [(10.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 0.0)], # [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+    [(0.0, 10.0), (0.0, 10.0), (0.0, 10.0), (0.0, 10.0), (0.0, 10.0), (0.0, 10.0)], # [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
 ]
 
 def distribute_fluid(fluid: float, targets: list[float]) -> list[float]:
@@ -46,19 +48,22 @@ def fluid_to_distribute(source: tuple[float, float], neighbors: list[tuple[float
 
     fluid_to_distribute = source[1]
 
-    # print(source)
-    # print(neighbors)
-
+    gravity_flows = []
     for neighbor in neighbors:
+        if fluid_to_distribute <= 0.0:
+            break
+
         first_part = min(fluid_to_distribute, max(0, source[0] - surface_height(neighbor)))
+        gravity_flows.append(first_part)
 
         result += first_part
         fluid_to_distribute -= first_part
 
-    for neighbor in neighbors:
-        # TODO: Refactor so I don't have to calculate first_part twice.
-        first_part = min(fluid_to_distribute, max(0, source[0] - surface_height(neighbor)))
-        second_part = max(0, min(source[1], (surface_height(source) - surface_height(neighbor))) - first_part)
+    for i, neighbor in enumerate(neighbors):
+        if fluid_to_distribute <= 0.0:
+            break
+
+        second_part = max(0, min(source[1], (surface_height(source) - surface_height(neighbor))) - gravity_flows[i])
         second_part = min(second_part, fluid_to_distribute)
         fluid_to_distribute -= second_part
         result += second_part * FLOW_FACTOR
@@ -102,7 +107,7 @@ print(route_water((10.0, 10.0), TEST_CASES[0])) # [9.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         }
 """
 print(route_water((10.0, 10.0), TEST_CASES[1])) # [10.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-# Intermediate case, as dictated by the existing code:
+# Intermediate case
 print(route_water((10.0, 10.0), TEST_CASES[2])) # [9.5, 0.0, 0.0, 0.0, 0.0, 0.0]
 # Two equally low neighbors results in flow getting distributed evenly.
 print(route_water((10.0, 10.0), TEST_CASES[3])) # [4.5, 4.5, 0.0, 0.0, 0.0, 0.0]
@@ -110,3 +115,7 @@ print(route_water((10.0, 10.0), TEST_CASES[3])) # [4.5, 4.5, 0.0, 0.0, 0.0, 0.0]
 print(route_water((10.0, 10.0), TEST_CASES[4])) # [5.5, 3.5, 0.0, 0.0, 0.0, 0.0]
 # A case to illustrate what seems to me to be an intuitive way to have FLOW_FACTOR interact with fractional routing.
 print(route_water((10.0, 10.0), TEST_CASES[5])) # [5.0, 5.0, 0.0, 0.0, 0.0, 0.0]
+# All target hexes are the same height so fluid is distributed evenly.
+print(route_water((10.0, 10.0), TEST_CASES[6])) # [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+# As previous case but with water instead of land—difference should not matter.
+print(route_water((10.0, 10.0), TEST_CASES[7])) # [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
