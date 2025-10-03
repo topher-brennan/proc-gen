@@ -81,9 +81,9 @@ An implementation in another language might hard-code having 6 neighbors but not
 def route_water(source: tuple[float, float], neighbors: list[tuple[float, float]]) -> list[float]:
     # TODO: Math to figure out how much fluid to distribute in total.
     
-    result = distribute_fluid(source[1], [neighbor[1] for neighbor in neighbors])
+    fluid = fluid_to_distribute(source, neighbors)
 
-    return result
+    return distribute_fluid(fluid, [surface_height(neighbor) for neighbor in neighbors])
 
 print("# Route water")
 # Only routing 90% of the fluid is a compromise between (1) quickly getting fluid out of the source in the case where fluid is coming into the
