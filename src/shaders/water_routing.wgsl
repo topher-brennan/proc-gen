@@ -6,6 +6,13 @@ struct Hex {
     elevation_residual: f32,
 }
 
+struct Constants {
+    width: f32,
+    height: f32,
+    flow_factor: f32,
+    max_flow: f32,
+}
+
 // TODO: read_write vs. read
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
@@ -16,27 +23,17 @@ var<storage, read_write> next_water: array<f32>;
 @group(0) @binding(2)
 var<storage, read_write> next_load: array<f32>;
 
-@group(0) @binding(6)
-var<storage, read_write> outflow_water: array<f32>;
-
-@group(0) @binding(7)
-var<storage, read_write> outflow_load: array<f32>;
-
 @group(0) @binding(3)
-var<storage, read_write> tgt_buffer: array<vec4<u32>>;
-
-@group(0) @binding(5)
-var<storage, read_write> flow_fractions: array<vec4<f32>>;
-
-struct Constants {
-    width: f32,
-    height: f32,
-    flow_factor: f32,
-    max_flow: f32,
-}
+var<storage, read_write> tgt_buffer: array<u32>;
 
 @group(0) @binding(4)
 var<uniform> constants: Constants;
+
+@group(0) @binding(5)
+var<storage, read_write> outflow_water: array<f32>;
+
+@group(0) @binding(6)
+var<storage, read_write> outflow_load: array<f32>;
 
 const NO_TARGET: u32 = 0xFFFFFFFFu;
 
@@ -94,8 +91,7 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         next_load[index] = hex.suspended_load;
         outflow_water[index] = 0.0;
         outflow_load[index] = 0.0;
-        tgt_buffer[index]  = vec4<u32>(NO_TARGET, NO_TARGET, NO_TARGET, NO_TARGET);
-        flow_fractions[index] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        tgt_buffer[index] = NO_TARGET;
         return;
     }
     
@@ -176,22 +172,19 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             next_water[index] = hex.water_depth - water_outflow;
             next_load[index] = hex.suspended_load - load_outflow;
 
-            tgt_buffer[index].x = target_index;
-            flow_fractions[index].x = 1.0;  // 100% flow to first target
+            tgt_buffer[index] = target_index;
         } else {
             outflow_water[index] = 0.0;
             outflow_load[index] = 0.0;
             next_water[index] = hex.water_depth;
             next_load[index] = hex.suspended_load;
-            tgt_buffer[index]  = vec4<u32>(NO_TARGET, NO_TARGET, NO_TARGET, NO_TARGET);
-            flow_fractions[index] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+            tgt_buffer[index] = NO_TARGET;
         }
     } else {
         outflow_water[index] = 0.0;
         outflow_load[index] = 0.0;
         next_water[index] = hex.water_depth;
         next_load[index] = hex.suspended_load;
-        tgt_buffer[index] = vec4<u32>(NO_TARGET, NO_TARGET, NO_TARGET, NO_TARGET);
-        flow_fractions[index] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        tgt_buffer[index] = NO_TARGET;
     }
 } 

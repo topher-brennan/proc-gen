@@ -6,6 +6,11 @@ struct Hex {
     elevation_residual: f32,
 }
 
+struct Constants {
+    width: f32,
+    height: f32,
+}
+
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 @group(0) @binding(1)
@@ -13,20 +18,13 @@ var<storage, read> next_water: array<f32>;
 @group(0) @binding(2)
 var<storage, read> next_load: array<f32>;
 @group(0) @binding(3)
-var<storage, read> tgt_buffer: array<vec4<u32>>;
-@group(0) @binding(5)
-var<storage, read> flow_fractions: array<vec4<f32>>;
-@group(0) @binding(6)
-var<storage, read> outflow_water: array<f32>;
-@group(0) @binding(7)
-var<storage, read> outflow_load: array<f32>;
-
-struct Constants {
-    width: f32,
-    height: f32,
-}
+var<storage, read> tgt_buffer: array<u32>;
 @group(0) @binding(4)
 var<uniform> consts: Constants;
+@group(0) @binding(5)
+var<storage, read> outflow_water: array<f32>;
+@group(0) @binding(6)
+var<storage, read> outflow_load: array<f32>;
 
 const NO_TARGET:u32 = 0xFFFFFFFFu;
 
@@ -85,9 +83,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let nx = x + off.x; let ny = y + off.y;
         if(!valid(nx,ny)){continue;}
         let n_idx = idx(nx,ny);
-        if(tgt_buffer[n_idx].x == index){
-            new_water += outflow_water[n_idx] * flow_fractions[n_idx].x;
-            new_load += outflow_load[n_idx] * flow_fractions[n_idx].x;
+        if(tgt_buffer[n_idx] == index){
+            new_water += outflow_water[n_idx];
+            new_load += outflow_load[n_idx];
         }
     }
 

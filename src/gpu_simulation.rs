@@ -95,7 +95,6 @@ pub struct GpuSimulation {
     next_water_buffer: wgpu::Buffer,
     next_load_buffer: wgpu::Buffer,
     tgt_buffer: wgpu::Buffer,
-    flow_fractions_buffer: wgpu::Buffer,
     outflow_water_buffer: wgpu::Buffer,
     outflow_load_buffer: wgpu::Buffer,
     scatter_pipeline: wgpu::ComputePipeline,
@@ -296,7 +295,7 @@ impl GpuSimulation {
                     },
                     count: None,
                 },
-                // flow_fractions
+                // outflow_water
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -307,20 +306,9 @@ impl GpuSimulation {
                     },
                     count: None,
                 },
-                // outflow_water
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
                 // outflow_load
                 wgpu::BindGroupLayoutEntry {
-                    binding: 7,
+                    binding: 6,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -359,7 +347,7 @@ impl GpuSimulation {
                 wgpu::BindGroupLayoutEntry{binding:2,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None},count:None},
                 wgpu::BindGroupLayoutEntry{binding:3,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None},count:None},
                 wgpu::BindGroupLayoutEntry{binding:4,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Uniform,has_dynamic_offset:false,min_binding_size:None},count:None},
-                // flow_fractions
+                // outflow_water
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -370,20 +358,9 @@ impl GpuSimulation {
                     },
                     count: None,
                 },
-                // outflow_water
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
                 // outflow_load
                 wgpu::BindGroupLayoutEntry {
-                    binding: 7,
+                    binding: 6,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -437,14 +414,7 @@ impl GpuSimulation {
 
         let tgt_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Target Buffer"),
-            size: (4 * 4) as u64,  // 4 components * 4 bytes per u32
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let flow_fractions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Flow Fractions Buffer"),
-            size: (4 * 4) as u64,  // 4 components * 4 bytes per f32
+            size: 4,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -479,9 +449,8 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry { binding:2, resource: next_load_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry { binding:3, resource: tgt_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry { binding:4, resource: routing_constants_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding:5, resource: flow_fractions_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding:6, resource: outflow_water_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding:7, resource: outflow_load_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:5, resource: outflow_water_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:6, resource: outflow_load_buffer.as_entire_binding()},
             ],
         });
 
@@ -522,9 +491,8 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:2,resource:next_load_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:3,resource:tgt_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:4,resource:scatter_consts_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding: 5, resource: flow_fractions_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: outflow_water_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: outflow_load_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: outflow_water_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: outflow_load_buffer.as_entire_binding() },
             ],
         });
 
@@ -759,7 +727,6 @@ impl GpuSimulation {
             next_water_buffer,
             next_load_buffer,
             tgt_buffer,
-            flow_fractions_buffer,
             outflow_water_buffer,
             outflow_load_buffer,
             scatter_pipeline,
@@ -855,14 +822,7 @@ impl GpuSimulation {
 
         self.tgt_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Target Buffer"),
-            size: (width*height*4*std::mem::size_of::<u32>()) as u64,  // 4 components per vec4
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        self.flow_fractions_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Flow Fractions Buffer"),
-            size: (width*height*4*std::mem::size_of::<f32>()) as u64,  // 4 components per vec4
+            size: (width*height*std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -891,9 +851,8 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:4,resource:self.routing_constants_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding: 5, resource: self.flow_fractions_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: self.outflow_water_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: self.outflow_load_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.outflow_water_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: self.outflow_load_buffer.as_entire_binding() },
             ],
         });
 
@@ -907,9 +866,8 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:4,resource:self.scatter_consts_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding: 5, resource: self.flow_fractions_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: self.outflow_water_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: self.outflow_load_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.outflow_water_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: self.outflow_load_buffer.as_entire_binding() },
             ],
         });
 
