@@ -86,12 +86,12 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let hex = hex_data[index];
     let f = total_fluid(hex);
     
+    // Initialize outflow buffers and target (next_water/next_load already initialized)
+    outflow_water[index] = 0.0;
+    outflow_load[index] = 0.0;
+    tgt_buffer[index] = NO_TARGET;
+
     if (f <= 0.0) {
-        next_water[index] = hex.water_depth;
-        next_load[index] = hex.suspended_load;
-        outflow_water[index] = 0.0;
-        outflow_load[index] = 0.0;
-        tgt_buffer[index] = NO_TARGET;
         return;
     }
     
@@ -168,23 +168,11 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             outflow_water[index] = water_outflow;
             outflow_load[index] = load_outflow;
 
-            // Store remaining water and sediment after outflow (new behavior)
-            next_water[index] = hex.water_depth - water_outflow;
-            next_load[index] = hex.suspended_load - load_outflow;
+            // Subtract outflow from next buffers (already initialized to current values)
+            next_water[index] -= water_outflow;
+            next_load[index] -= load_outflow;
 
             tgt_buffer[index] = target_index;
-        } else {
-            outflow_water[index] = 0.0;
-            outflow_load[index] = 0.0;
-            next_water[index] = hex.water_depth;
-            next_load[index] = hex.suspended_load;
-            tgt_buffer[index] = NO_TARGET;
         }
-    } else {
-        outflow_water[index] = 0.0;
-        outflow_load[index] = 0.0;
-        next_water[index] = hex.water_depth;
-        next_load[index] = hex.suspended_load;
-        tgt_buffer[index] = NO_TARGET;
     }
 } 
