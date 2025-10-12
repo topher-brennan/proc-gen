@@ -9,13 +9,15 @@ struct Hex {
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 @group(0) @binding(1)
-var<storage, read_write> out_water: array<f32>;
+var<storage, read> next_water: array<f32>;
 @group(0) @binding(2)
-var<storage, read_write> out_load: array<f32>;
+var<storage, read_write> next_load: array<f32>;
 @group(0) @binding(3)
 var<storage, read> tgt_buffer: array<vec4<u32>>;
 @group(0) @binding(5)
 var<storage, read> flow_fractions: array<vec4<f32>>;
+@group(0) @binding(6)
+var<storage, read> outflow_water: array<f32>;
 
 struct Constants {
     width: f32,
@@ -46,16 +48,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let total = u32(consts.width*consts.height);
     if(index>=total){ return; }
 
-    let water_out = out_water[index];
-    let load_out = out_load[index];
+    // Start with water after outflow (from routing phase, new behavior)
+    var new_water = next_water[index];
 
-    // Subtract own outflow (saturating to avoid tiny negative clamp losses)
-    let current_water = hex_data[index].water_depth;
+    // Subtract own sediment outflow (old behavior for next_load)
+    let load_out = next_load[index];
     let current_load = hex_data[index].suspended_load;
-    var new_water = current_water - min(water_out, current_water);
     var new_load = current_load - min(load_out, current_load);
 
-    // add inflows from neighbours
+    // Add inflows from neighbours
     let w = u32(consts.width);
     let x = i32(index % w);
     let y = i32(index / w);
@@ -87,8 +88,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if(!valid(nx,ny)){continue;}
         let n_idx = idx(nx,ny);
         if(tgt_buffer[n_idx].x == index){
-            new_water += out_water[n_idx] * flow_fractions[n_idx].x;
-            new_load += out_load[n_idx] * flow_fractions[n_idx].x;
+            new_water += outflow_water[n_idx] * flow_fractions[n_idx].x;
+            new_load += next_load[n_idx] * flow_fractions[n_idx].x;
         }
     }
 
