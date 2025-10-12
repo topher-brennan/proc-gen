@@ -80,7 +80,6 @@ pub struct GpuSimulation {
     queue: wgpu::Queue,
     hex_buffer: wgpu::Buffer,
     hex_buffer_size: usize,
-    compute_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     // Rainfall specific pipeline and resources
@@ -161,11 +160,6 @@ impl GpuSimulation {
             .await
             .expect("Failed to create device");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("simulation.wgsl"))),
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind Group Layout"),
             entries: &[
@@ -182,17 +176,11 @@ impl GpuSimulation {
             ],
         });
 
+        // TODO: Remove?
         let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Compute Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
-        });
-
-        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Compute Pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &shader,
-            entry_point: "main",
         });
 
         // Rainfall pipeline
@@ -694,7 +682,6 @@ impl GpuSimulation {
             queue,
             hex_buffer,
             hex_buffer_size,
-            compute_pipeline,
             bind_group_layout,
             bind_group,
             rainfall_pipeline,
