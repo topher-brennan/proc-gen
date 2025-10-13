@@ -48,13 +48,13 @@ def fluid_to_distribute(source: tuple[float, float], neighbors: list[tuple[float
 
     fluid_to_distribute = source[1]
 
-    gravity_flows = []
+    first_part_flows = []
     for neighbor in neighbors:
         if fluid_to_distribute <= 0.0:
             break
 
         first_part = min(fluid_to_distribute, max(0, source[0] - surface_height(neighbor)))
-        gravity_flows.append(first_part)
+        first_part_flows.append(first_part)
 
         result += first_part
         fluid_to_distribute -= first_part
@@ -63,7 +63,7 @@ def fluid_to_distribute(source: tuple[float, float], neighbors: list[tuple[float
         if fluid_to_distribute <= 0.0:
             break
 
-        second_part = max(0, min(source[1], (surface_height(source) - surface_height(neighbor))) - gravity_flows[i])
+        second_part = max(0, min(source[1], (surface_height(source) - surface_height(neighbor))) - first_part_flows[i])
         second_part = min(second_part, fluid_to_distribute)
         fluid_to_distribute -= second_part
         result += second_part * FLOW_FACTOR

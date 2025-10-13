@@ -18,22 +18,13 @@ struct Constants {
 var<storage, read_write> hex_data: array<Hex>;
 
 @group(0) @binding(1)
-var<storage, read_write> next_water: array<f32>;
+var<storage, read_write> next_water: array<atomic<i32>>;
 
 @group(0) @binding(2)
-var<storage, read_write> next_load: array<f32>;
+var<storage, read_write> next_load: array<atomic<i32>>;
 
 @group(0) @binding(3)
-var<storage, read_write> tgt_buffer: array<u32>;
-
-@group(0) @binding(4)
 var<uniform> constants: Constants;
-
-@group(0) @binding(5)
-var<storage, read_write> outflow_water: array<f32>;
-
-@group(0) @binding(6)
-var<storage, read_write> outflow_load: array<f32>;
 
 const NO_TARGET: u32 = 0xFFFFFFFFu;
 
@@ -69,6 +60,7 @@ fn get_hex_index(x: i32, y: i32) -> u32 {
     return u32(y * i32(constants.width) + x);
 }
 
+
 @compute @workgroup_size(256)
 fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
@@ -86,11 +78,6 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let hex = hex_data[index];
     let f = total_fluid(hex);
     
-    // Initialize outflow buffers and target (next_water/next_load already initialized)
-    outflow_water[index] = 0.0;
-    outflow_load[index] = 0.0;
-    tgt_buffer[index] = NO_TARGET;
-
     if (f <= 0.0) {
         return;
     }
@@ -164,15 +151,48 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
             let load_outflow = sediment_fraction(hex) * move_f;
 
-            // Store outflow amounts for scatter phase
-            outflow_water[index] = water_outflow;
-            outflow_load[index] = load_outflow;
+            // Subtract outflow from our own next buffers (atomic for thread safety)
+            // We use compareExchange loop because atomicAdd only works on integers
+            var old_bits = atomicLoad(&next_water[index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 - water_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_water[index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+            
+            old_bits = atomicLoad(&next_load[index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 - load_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_load[index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
 
-            // Subtract outflow from next buffers (already initialized to current values)
-            next_water[index] -= water_outflow;
-            next_load[index] -= load_outflow;
-
-            tgt_buffer[index] = target_index;
+            // Add inflow to target's next buffers (atomic for thread safety)
+            old_bits = atomicLoad(&next_water[target_index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 + water_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_water[target_index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+            
+            old_bits = atomicLoad(&next_load[target_index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 + load_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_load[target_index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
         }
     }
 } 

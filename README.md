@@ -4,9 +4,9 @@ In addition to having river inflows/outflows, I experimented with having an off-
 
 Below reading list is mostly things I haven't incorporated but may in the future.
 
-To run a quick test:
+To run a quick (~5 minute) test:
 ```
-cargo run --release -- --rounds 1
+cargo run --release -- --rounds 10
 ```
 
 Reading list

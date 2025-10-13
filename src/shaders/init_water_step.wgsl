@@ -14,10 +14,10 @@ struct Hex {
 var<storage, read> hex_data: array<Hex>;
 
 @group(0) @binding(1)
-var<storage, read_write> next_water: array<f32>;
+var<storage, read_write> next_water: array<atomic<i32>>;
 
 @group(0) @binding(2)
-var<storage, read_write> next_load: array<f32>;
+var<storage, read_write> next_load: array<atomic<i32>>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -26,7 +26,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    next_water[index] = hex_data[index].water_depth;
-    next_load[index] = hex_data[index].suspended_load;
+    // Store as bitcast integers for atomic operations
+    atomicStore(&next_water[index], bitcast<i32>(hex_data[index].water_depth));
+    atomicStore(&next_load[index], bitcast<i32>(hex_data[index].suspended_load));
 }
 
