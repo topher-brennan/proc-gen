@@ -80,7 +80,6 @@ pub struct GpuSimulation {
     queue: wgpu::Queue,
     hex_buffer: wgpu::Buffer,
     hex_buffer_size: usize,
-    compute_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     // Rainfall specific pipeline and resources
@@ -88,6 +87,10 @@ pub struct GpuSimulation {
     rainfall_bind_group_layout: wgpu::BindGroupLayout,
     rainfall_bind_group: wgpu::BindGroup,
     rain_constants_buffer: wgpu::Buffer,
+    // Water step initialization resources
+    init_water_pipeline: wgpu::ComputePipeline,
+    init_water_bind_group_layout: wgpu::BindGroupLayout,
+    init_water_bind_group: wgpu::BindGroup,
     // Water-routing resources
     routing_pipeline: wgpu::ComputePipeline,
     routing_bind_group_layout: wgpu::BindGroupLayout,
@@ -95,7 +98,6 @@ pub struct GpuSimulation {
     routing_constants_buffer: wgpu::Buffer,
     next_water_buffer: wgpu::Buffer,
     next_load_buffer: wgpu::Buffer,
-    tgt_buffer: wgpu::Buffer,
     scatter_pipeline: wgpu::ComputePipeline,
     scatter_bind_group: wgpu::BindGroup,
     scatter_bind_group_layout: wgpu::BindGroupLayout,
@@ -160,11 +162,6 @@ impl GpuSimulation {
             .await
             .expect("Failed to create device");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("simulation.wgsl"))),
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind Group Layout"),
             entries: &[
@@ -181,23 +178,17 @@ impl GpuSimulation {
             ],
         });
 
+        // TODO: Remove?
         let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Compute Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Compute Pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &shader,
-            entry_point: "main",
-        });
-
         // Rainfall pipeline
         let rainfall_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Rainfall Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/rainfall.wgsl")))),
+            source: wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/rainfall.wgsl")).into()),
         });
 
         let rainfall_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -241,21 +232,21 @@ impl GpuSimulation {
             entry_point: "add_rainfall",
         });
 
-        // Water routing pipeline
-        let routing_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Water Routing Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/water_routing.wgsl")))),
+        // Water step initialization pipeline (copies water/load from hex_data to next buffers)
+        let init_water_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Init Water Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/init_water_step.wgsl").into()),
         });
 
-        let routing_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Routing BGL"),
+        let init_water_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Init Water BGL"),
             entries: &[
-                // hex_data
+                // hex_data (read-only)
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -283,9 +274,56 @@ impl GpuSimulation {
                     },
                     count: None,
                 },
-                // tgt_buffer
+            ],
+        });
+
+        let init_water_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Init Water Pipeline Layout"),
+            bind_group_layouts: &[&init_water_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let init_water_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Init Water Pipeline"),
+            layout: Some(&init_water_pipeline_layout),
+            module: &init_water_shader,
+            entry_point: "main",
+        });
+
+        // Water routing pipeline
+        let routing_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Water Routing Shader"),
+            source: wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/water_routing.wgsl")).into()),
+        });
+
+        let routing_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Routing BGL"),
+            entries: &[
+                // hex_data
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // next_water (atomic)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // next_load (atomic)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -296,7 +334,7 @@ impl GpuSimulation {
                 },
                 // constants
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
+                    binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -324,17 +362,18 @@ impl GpuSimulation {
         // Scatter pipeline
         let scatter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Scatter Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/scatter_water.wgsl")))),
+            source: wgpu::ShaderSource::Wgsl(concat!(include_str!("shaders/common.wgsl"), include_str!("shaders/scatter_water.wgsl")).into()),
         });
 
         let scatter_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
             label: Some("Scatter BGL"),
             entries: &[
+                // hex_data (read_write)
                 wgpu::BindGroupLayoutEntry{binding:0,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:false},has_dynamic_offset:false,min_binding_size:None},count:None},
-                wgpu::BindGroupLayoutEntry{binding:1,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:false},has_dynamic_offset:false,min_binding_size:None},count:None},
-                wgpu::BindGroupLayoutEntry{binding:2,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:false},has_dynamic_offset:false,min_binding_size:None},count:None},
-                wgpu::BindGroupLayoutEntry{binding:3,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None},count:None},
-                wgpu::BindGroupLayoutEntry{binding:4,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Uniform,has_dynamic_offset:false,min_binding_size:None},count:None},
+                // next_water (atomic, read-only)
+                wgpu::BindGroupLayoutEntry{binding:1,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None},count:None},
+                // next_load (atomic, read-only)
+                wgpu::BindGroupLayoutEntry{binding:2,visibility:wgpu::ShaderStages::COMPUTE,ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None},count:None},
             ],
         });
 
@@ -378,13 +417,6 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
-        let tgt_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Target Buffer"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let routing_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Routing Constants Buffer"),
             size: std::mem::size_of::<[f32;4]>() as u64,
@@ -399,8 +431,7 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry { binding:0, resource: hex_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry { binding:1, resource: next_water_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry { binding:2, resource: next_load_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding:3, resource: tgt_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry { binding:4, resource: routing_constants_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry { binding:3, resource: routing_constants_buffer.as_entire_binding()},
             ],
         });
 
@@ -415,6 +446,25 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: rain_constants_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let init_water_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Init Water Bind Group"),
+            layout: &init_water_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: hex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: next_water_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: next_load_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -439,8 +489,6 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:0,resource:hex_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:1,resource:next_water_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:2,resource:next_load_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:3,resource:tgt_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:4,resource:scatter_consts_buffer.as_entire_binding()},
             ],
         });
 
@@ -662,20 +710,21 @@ impl GpuSimulation {
             queue,
             hex_buffer,
             hex_buffer_size,
-            compute_pipeline,
             bind_group_layout,
             bind_group,
             rainfall_pipeline,
             rainfall_bind_group_layout,
             rainfall_bind_group,
             rain_constants_buffer,
+            init_water_pipeline,
+            init_water_bind_group_layout,
+            init_water_bind_group,
             routing_pipeline,
             routing_bind_group_layout,
             routing_bind_group,
             routing_constants_buffer,
             next_water_buffer,
             next_load_buffer,
-            tgt_buffer,
             scatter_pipeline,
             scatter_bind_group,
             scatter_bind_group_layout,
@@ -767,11 +816,24 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
-        self.tgt_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Target Buffer"),
-            size: (width*height*std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
+        // Recreate init_water bind group
+        self.init_water_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Init Water Bind Group"),
+            layout: &self.init_water_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.hex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.next_water_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.next_load_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         // Recreate routing bind group with resized buffers
@@ -782,8 +844,7 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:0,resource:self.hex_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:1,resource:self.next_water_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:4,resource:self.routing_constants_buffer.as_entire_binding()},
+                wgpu::BindGroupEntry{binding:3,resource:self.routing_constants_buffer.as_entire_binding()},
             ],
         });
 
@@ -795,8 +856,6 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry{binding:0,resource:self.hex_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:1,resource:self.next_water_buffer.as_entire_binding()},
                 wgpu::BindGroupEntry{binding:2,resource:self.next_load_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:3,resource:self.tgt_buffer.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:4,resource:self.scatter_consts_buffer.as_entire_binding()},
             ],
         });
 
@@ -1078,7 +1137,17 @@ impl GpuSimulation {
             pass.dispatch_workgroups(dispatch_x, 1, 1);
         }
 
-        // 4. Water routing pass
+        // 4. Initialize water step (copy water/load from hex_data to next buffers AFTER erosion)
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Init Water Pass"),
+            });
+            pass.set_pipeline(&self.init_water_pipeline);
+            pass.set_bind_group(0, &self.init_water_bind_group, &[]);
+            pass.dispatch_workgroups(dispatch_x, 1, 1);
+        }
+
+        // 5. Water routing pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Water Routing Pass"),
@@ -1088,7 +1157,7 @@ impl GpuSimulation {
             pass.dispatch_workgroups(dispatch_x, 1, 1);
         }
 
-        // 5. Scatter pass
+        // 6. Scatter pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Scatter Pass"),
@@ -1098,7 +1167,7 @@ impl GpuSimulation {
             pass.dispatch_workgroups(dispatch_x, 1, 1);
         }
 
-        // 6. Repose deltas pass
+        // 7. Repose deltas pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Repose Deltas Pass"),
@@ -1108,7 +1177,7 @@ impl GpuSimulation {
             pass.dispatch_workgroups(dispatch_x, 1, 1);
         }
 
-        // 7. Apply deltas pass
+        // 8. Apply deltas pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Apply Deltas Pass"),
@@ -1118,7 +1187,7 @@ impl GpuSimulation {
             pass.dispatch_workgroups(dispatch_x, 1, 1);
         }
 
-        // 8. Ocean boundary pass
+        // 9. Ocean boundary pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Ocean Boundary Pass"),

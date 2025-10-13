@@ -6,18 +6,6 @@ struct Hex {
     elevation_residual: f32,
 }
 
-@group(0) @binding(0)
-var<storage, read_write> hex_data: array<Hex>;
-
-@group(0) @binding(1)
-var<storage, read_write> next_water: array<f32>;
-
-@group(0) @binding(2)
-var<storage, read_write> next_load: array<f32>;
-
-@group(0) @binding(3)
-var<storage, read_write> tgt_buffer: array<u32>;
-
 struct Constants {
     width: f32,
     height: f32,
@@ -25,7 +13,17 @@ struct Constants {
     max_flow: f32,
 }
 
-@group(0) @binding(4)
+// TODO: read_write vs. read
+@group(0) @binding(0)
+var<storage, read_write> hex_data: array<Hex>;
+
+@group(0) @binding(1)
+var<storage, read_write> next_water: array<atomic<i32>>;
+
+@group(0) @binding(2)
+var<storage, read_write> next_load: array<atomic<i32>>;
+
+@group(0) @binding(3)
 var<uniform> constants: Constants;
 
 const NO_TARGET: u32 = 0xFFFFFFFFu;
@@ -62,6 +60,7 @@ fn get_hex_index(x: i32, y: i32) -> u32 {
     return u32(y * i32(constants.width) + x);
 }
 
+
 @compute @workgroup_size(256)
 fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
@@ -80,9 +79,6 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let f = total_fluid(hex);
     
     if (f <= 0.0) {
-        next_water[index] = 0.0;
-        next_load[index] = 0.0;
-        tgt_buffer[index]  = NO_TARGET;
         return;
     }
     
@@ -152,17 +148,51 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         move_f = min(move_f, f);
 
         if (move_f > 0.0) {
-            next_water[index] = (1.0 - sediment_fraction(hex)) * move_f;
-            next_load[index] = sediment_fraction(hex) * move_f;
-            tgt_buffer[index]  = target_index;
-        } else {
-            next_water[index] = 0.0;
-            next_load[index] = 0.0;
-            tgt_buffer[index]  = NO_TARGET;
+            let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
+            let load_outflow = sediment_fraction(hex) * move_f;
+
+            // Subtract outflow from our own next buffers (atomic for thread safety)
+            // We use compareExchange loop because atomicAdd only works on integers
+            var old_bits = atomicLoad(&next_water[index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 - water_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_water[index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+            
+            old_bits = atomicLoad(&next_load[index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 - load_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_load[index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+
+            // Add inflow to target's next buffers (atomic for thread safety)
+            old_bits = atomicLoad(&next_water[target_index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 + water_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_water[target_index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+            
+            old_bits = atomicLoad(&next_load[target_index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 + load_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_load[target_index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
         }
-    } else {
-        next_water[index] = 0.0;
-        next_load[index] = 0.0;
-        tgt_buffer[index] = NO_TARGET;
     }
 } 

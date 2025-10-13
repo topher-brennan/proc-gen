@@ -4,6 +4,11 @@ In addition to having river inflows/outflows, I experimented with having an off-
 
 Below reading list is mostly things I haven't incorporated but may in the future.
 
+To run a quick (~5 minute) test:
+```
+cargo run --release -- --rounds 10
+```
+
 Reading list
 ------------
 • [Liang et al. 2015](https://esurf.copernicus.org/articles/3/67/2015/esurf-3-67-2015.html) – DeltaRCM reduced-complexity delta model ([GitHub](https://github.com/DeltaRCM/pyDeltaRCM)).
