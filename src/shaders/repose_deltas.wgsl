@@ -74,6 +74,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let excess = (diff - C.hex_size) / 7.0;
                 var old_val: u32;
                 var new_val: u32;
+                // TODO: Alternatives to busy waiting here?
                 loop {
                     old_val = atomicLoad(&delta_buffer[index]);
                     let old_f32 = bitcast<f32>(old_val);

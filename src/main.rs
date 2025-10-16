@@ -290,6 +290,7 @@ fn simulate_erosion(
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
 
+    // TODO: Vary sea level over time.
     let mut current_sea_level = SEA_LEVEL;
 
     upload_hex_data(hex_map, &gpu_sim);
@@ -428,15 +429,19 @@ fn simulate_erosion(
                 .sum();
 
             println!(
-                "Round {:.0}: water in {:.3}  stored {:.3}  mean depth {:.3} ft  max depth {:.3} ft  wet {:} ({:.1}%)  source elevation {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
+                "Round {:.0}: water in {:.3}  stored {:.3}  mean depth {:.3} ft  max depth {:.3} ft  wet {:} ({:.1}%)",
                 round,
                 rainfall_added,
                 water_on_land,
                 mean_depth,
                 max_depth,
                 wet_cells,
-                wet_cells_percentage,
+                wet_cells_percentage
+            );
+            println!(
+                "  source elevation {:.3} ft  source water depth {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
                 source_hex.elevation,
+                source_hex.water_depth,
                 outlet_hex.elevation,
                 target_delta_hex.elevation,
             );
@@ -677,7 +682,7 @@ fn main() {
         rng.gen_range(0..u32::MAX)
     });
 
-    let elevation_adjustment = rounds as f32 / 60_000.0 as f32;
+    let elevation_adjustment = rounds as f32 * 10.0 * RAINFALL_FACTOR;
     let adj_south_mountains_max_elevation = SOUTH_MOUNTAINS_MAX_ELEVATION * (1.0 + elevation_adjustment);
     let adj_central_highland_max_elevation = CENTRAL_HIGHLAND_MAX_ELEVATION * (1.0 + elevation_adjustment * LOW_RAIN / MEDIUM_RAIN);
     let adj_north_desert_max_elevation = NORTH_DESERT_MAX_ELEVATION * (1.0 + elevation_adjustment * VERY_LOW_RAIN / MEDIUM_RAIN);
@@ -759,7 +764,7 @@ fn main() {
             if distance_from_coast > COAST_WIDTH as f32 * cut_factor {
                 elevation = elevation.min(distance_from_coast * 2.0 / COAST_WIDTH as f32 * adj_south_mountains_max_elevation);
             } else {
-                elevation = elevation.min((COAST_WIDTH as f32 * cut_factor - distance_from_coast) * adj_south_mountains_max_elevation / COAST_WIDTH as f32 / 2.0 + adj_south_mountains_max_elevation * cut_factor);
+                elevation = elevation.min((COAST_WIDTH as f32 * cut_factor - distance_from_coast) * adj_south_mountains_max_elevation / COAST_WIDTH as f32 / 2.0 + adj_south_mountains_max_elevation * cut_factor * 2.0);
             }
 
             // TODO: More realistic seafloor depth, and fix islands.
@@ -827,7 +832,8 @@ fn main() {
                 elevation,
                 water_depth: 0.0,
                 suspended_load: 0.0,
-                rainfall: rainfall * RAINFALL_FACTOR,
+                // TODO: Is the added randomness actually helping? Probably doens't hurt at least.
+                rainfall: rainfall * RAINFALL_FACTOR * rng.gen_range(0.9..1.1),
                 original_land: elevation > SEA_LEVEL,
             });
         }
