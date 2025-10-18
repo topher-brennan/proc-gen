@@ -4,6 +4,7 @@ struct Hex {
     suspended_load: f32,
     _rainfall: f32,
     elevation_residual: f32,
+    erosion_multiplier: f32,
 }
 
 struct Constants {

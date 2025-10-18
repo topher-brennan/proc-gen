@@ -7,6 +7,7 @@ struct Hex {
     suspended_load: f32,
     rainfall: f32,
     elevation_residual: f32,
+    erosion_multiplier: f32,
 };
 
 struct Log {
@@ -45,7 +46,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[index]), 0.0);
-    let capacity = P.kc * min(cell.water_depth, min(height_diff, P.hex_size));
+    let capacity = P.kc * min(cell.water_depth, min(height_diff, P.hex_size)) * cell.erosion_multiplier;
 
     if (cell.suspended_load < capacity) {
         // erode

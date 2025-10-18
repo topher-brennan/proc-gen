@@ -110,6 +110,7 @@ struct Hex {
     water_depth: f32, // Feet of water currently stored in this hex
     suspended_load: f32, // Feet of sediment stored in water column
     rainfall: f32, // Feet of rainfall added to this hex per step
+    erosion_multiplier: f32,
     original_land: bool,
 }
 
@@ -218,6 +219,7 @@ fn upload_hex_data(hex_map: &Vec<Vec<Hex>>, gpu_sim: &GpuSimulation) {
                 suspended_load: h.suspended_load,
                 rainfall: h.rainfall,
                 residual_elevation: 0.0,
+                erosion_multiplier: h.erosion_multiplier,
             });
         }
     }
@@ -235,6 +237,7 @@ fn download_hex_data(gpu_sim: &GpuSimulation, hex_map: &mut Vec<Vec<Hex>>) {
         cell.elevation = h.elevation + h.residual_elevation;
         cell.water_depth = h.water_depth;
         cell.suspended_load = h.suspended_load;
+        cell.erosion_multiplier = h.erosion_multiplier;
     }
 }
 
@@ -834,6 +837,7 @@ fn main() {
                 suspended_load: 0.0,
                 // TODO: Is the added randomness actually helping? Probably doens't hurt at least.
                 rainfall: rainfall * RAINFALL_FACTOR * rng.gen_range(0.9..1.1),
+                erosion_multiplier: rng.gen_range(0.95..1.05),
                 original_land: elevation > SEA_LEVEL,
             });
         }

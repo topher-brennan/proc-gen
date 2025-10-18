@@ -7,6 +7,7 @@ struct Hex {
     suspended_load: f32,
     rainfall: f32,
     elevation_residual: f32,
+    erosion_multiplier: f32,
 };
 
 struct Outflow {
@@ -36,16 +37,24 @@ var<storage, read_write> out_data: array<Outflow>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let y = global_id.x;
+    let index = global_id.x;
+    let width = u32(params.width);
+    let height = u32(params.height);
+    let total_hexes = width * height;
 
-    // TODO: Consider letting water flow off south edge
-    // Exit if this invocation is for a cell outside the map's height
-    if (y >= u32(params.height)) {
+    if (index >= total_hexes) {
         return;
     }
 
-    // Compute linear index for west-edge cell at row y: index = y * width + 0
-    let index = y * u32(params.width);
+    let x = i32(index % width);
+    let y = i32(index / width);
+
+    // TODO: This is supposed to result in outflows on the western and southern edges of the
+    // map. I could've sworn it was working before but now the southern outflows don't seem
+    // to work.
+    if (x != 0 && y != (i32(height) - 1)) {
+        return;
+    }
 
     var cell = hex_data[index];
 

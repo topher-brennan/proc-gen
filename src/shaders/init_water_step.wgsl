@@ -8,6 +8,7 @@ struct Hex {
     suspended_load: f32,
     rainfall: f32,
     elevation_residual: f32,
+    erosion_multiplier: f32,
 }
 
 @group(0) @binding(0)
