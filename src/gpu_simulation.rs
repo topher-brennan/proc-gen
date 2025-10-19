@@ -1101,7 +1101,8 @@ impl GpuSimulation {
         let workgroup_size: u32 = 256;
         let total = (width * height) as u32;
         let dispatch_x = (total + workgroup_size - 1) / workgroup_size;
-        let ocean_dispatch = (height as u32 + workgroup_size - 1) / workgroup_size;
+        // Ocean boundary needs to process all cells to find west/south edge cells
+        let ocean_dispatch = dispatch_x;
 
         // Create single command encoder for all passes
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
