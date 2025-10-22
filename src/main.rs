@@ -835,7 +835,8 @@ fn main() {
                 elevation,
                 water_depth: 0.0,
                 suspended_load: 0.0,
-                // TODO: Is the added randomness actually helping? Probably doens't hurt at least.
+                // Randomizing rainfall and erosion slightly seems to help with coastlines and mountains
+                // but may actually make my problems with chanelization worse.
                 rainfall: rainfall * RAINFALL_FACTOR * rng.gen_range(0.9..1.1),
                 erosion_multiplier: rng.gen_range(0.95..1.05),
                 original_land: elevation > SEA_LEVEL,
