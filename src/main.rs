@@ -656,8 +656,8 @@ fn get_perlin_noise_for_hex(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32
 }
 
 // Generates a value between -COAST_WIDTH/2 and COAST_WIDTH/2.
-fn get_sea_deviation(perlin: &Perlin, y: f64, period: f64) -> usize {
-    ((get_perlin_noise(perlin, y, period) - 0.5) * COAST_WIDTH as f32) as usize
+fn get_sea_deviation(perlin: &Perlin, y: f64, period: f64) -> i16 {
+    ((get_perlin_noise(perlin, y, period) - 0.5) * COAST_WIDTH as f32) as i16
 }
 
 // Generates a value between -12 and 12.
@@ -697,9 +697,9 @@ fn main() {
 
     let perlin = Perlin::new(seed);
     let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
-    let sea_deviation_for_river_y = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+    let sea_deviation_for_river_y: i16 = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
     
-    let river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y;
+    let river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y as usize;
     let land_deviation_for_outlet = get_land_deviation(&perlin, river_outlet_x as f64, RIVER_Y as f64, 96.0);
 
     // Time hex map creation
@@ -709,23 +709,24 @@ fn main() {
         hex_map.push(Vec::new());
         let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
         let sea_deviation = get_sea_deviation(&perlin, y as f64, HEIGHT_PIXELS as f64 / 1.5);
-        let shelf_deviation = get_sea_deviation(&perlin, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
+        let shelf_deviation = sea_deviation;
+        // let shelf_deviation = get_sea_deviation(&perlin, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
         let cut_factor = -0.06 - get_perlin_noise(&perlin, (y + HEIGHT_PIXELS * 5 / 2) as f64, HEIGHT_PIXELS as f64 / 1.5) * 0.06;
 
         for x in 0..WIDTH_HEXAGONS {
             let mut elevation = 0.0;
-            let mut distance_from_coast = (x + sea_deviation) as f32 - TOTAL_SEA_WIDTH as f32;
             let adjusted_y = y as f64 + (x % 2) as f64 * 0.5;
             let y_deviation = land_deviation_for_outlet - get_land_deviation(&perlin, x as f64, y as f64, 96.0);
+            let deviated_x: usize = (x as i16 + shelf_deviation).max(0) as usize;
             let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
+            let mut distance_from_coast = deviated_x as f32 - TOTAL_SEA_WIDTH as f32;
 
-
-            if x + shelf_deviation < ABYSSAL_PLAINS_WIDTH {
-                elevation = -1.0 * ABYSSAL_PLAINS_MIN_DEPTH - (ABYSSAL_PLAINS_WIDTH - (x + shelf_deviation)) as f32 * ABYSSAL_PLAINS_INCREMENT;
-            } else if x + shelf_deviation >= ABYSSAL_PLAINS_WIDTH && x + shelf_deviation < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
-                elevation = (x + shelf_deviation - ABYSSAL_PLAINS_WIDTH) as f32 * CONTINENTAL_SLOPE_INCREMENT - ABYSSAL_PLAINS_MIN_DEPTH;
-            } else if x + sea_deviation < TOTAL_SEA_WIDTH {
-                elevation = (x + shelf_deviation - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
+            if deviated_x < ABYSSAL_PLAINS_WIDTH {
+                elevation = -1.0 * ABYSSAL_PLAINS_MIN_DEPTH - (ABYSSAL_PLAINS_WIDTH - deviated_x) as f32 * ABYSSAL_PLAINS_INCREMENT;
+            } else if deviated_x >= ABYSSAL_PLAINS_WIDTH && deviated_x < ABYSSAL_PLAINS_WIDTH + CONTINENTAL_SLOPE_WIDTH {
+                elevation = (deviated_x - ABYSSAL_PLAINS_WIDTH) as f32 * CONTINENTAL_SLOPE_INCREMENT - ABYSSAL_PLAINS_MIN_DEPTH;
+            } else if deviated_x < TOTAL_SEA_WIDTH {
+                elevation = (deviated_x - ABYSSAL_PLAINS_WIDTH - CONTINENTAL_SLOPE_WIDTH) as f32 * CONTINENTAL_SHELF_INCREMENT - CONTINENTAL_SHELF_DEPTH;
                 elevation = elevation.min(-1.0 * f32::EPSILON);
             } else {
                 let map_third_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, HEIGHT_PIXELS as f64 / 3.0);
@@ -761,6 +762,7 @@ fn main() {
                 }
             }
 
+            // Mostly to prevent very steep coastal cliffs
             // This produces a cut whose downward slope is 2 * MOUNTAINS_MAX_ELEVATION / COAST_WIDTH
             // The cut's deepest point is COAST_WIDTH * cut_factor from the coast, at a depth of 2 * MOUNTAINS_MAX_ELEVATION * cut_factor.
             // Then it slopes upward at the multiplicative inverse of the initial slope (if I did my math right).
@@ -790,7 +792,7 @@ fn main() {
                 }
             }
 
-            if x + sea_deviation <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
+            if deviated_x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
                 elevation += rng.gen_range(0.0..0.01) * elevation.max(HEX_SIZE as f32);
             }
 
@@ -835,10 +837,10 @@ fn main() {
                 elevation,
                 water_depth: 0.0,
                 suspended_load: 0.0,
-                // Randomizing rainfall and erosion slightly seems to help with coastlines and mountains
-                // but may actually make my problems with chanelization worse.
+                // TODO: Is the added randomness actually helping? Probably doens't hurt at least.
                 rainfall: rainfall * RAINFALL_FACTOR * rng.gen_range(0.9..1.1),
-                erosion_multiplier: rng.gen_range(0.95..1.05),
+                // TODO: Fiddle with range, seems to help with coastlines and mountains but may make chanelization worse.
+                erosion_multiplier: rng.gen_range(0.98..1.02),
                 original_land: elevation > SEA_LEVEL,
             });
         }
