@@ -7,10 +7,11 @@ fn total_fluid(cell: Hex) -> f32 {
 }
 
 fn sediment_fraction(cell: Hex) -> f32 {
-    if (total_fluid(cell) <= 0.0) {
+    let tf = total_fluid(cell);
+    if (tf <= 0.0) {
         return 0.0;
     }
-    return cell.suspended_load / total_fluid(cell);
+    return cell.suspended_load / tf;
 }
 
 fn total_elevation(cell: Hex) -> f32 {

@@ -65,6 +65,7 @@ pub struct HexGpu {
     pub rainfall: f32, // per-hex rainfall depth per step
     pub residual_elevation: f32,
     pub erosion_multiplier: f32,
+    pub uplift: f32,
 }
 
 #[repr(C)]

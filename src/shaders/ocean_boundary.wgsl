@@ -8,6 +8,7 @@ struct Hex {
     rainfall: f32,
     elevation_residual: f32,
     erosion_multiplier: f32,
+    uplift: f32,
 };
 
 struct Outflow {
@@ -76,7 +77,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Apply ocean boundary
     cell.water_depth -= water_out;
+    if (cell.water_depth < 0.0) {
+        cell.water_depth = 0.0;
+    }
+
     cell.suspended_load -= sediment_out;
+    if (cell.suspended_load < 0.0) {
+        cell.suspended_load = 0.0;
+    }
 
     hex_data[index] = cell;
 } 

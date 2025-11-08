@@ -9,6 +9,7 @@ struct Hex {
     _rainfall:          f32,
     elevation_residual: f32,
     erosion_multiplier: f32,
+    uplift:             f32,
 };
 
 struct Consts {

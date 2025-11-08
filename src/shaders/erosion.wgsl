@@ -8,6 +8,7 @@ struct Hex {
     rainfall: f32,
     elevation_residual: f32,
     erosion_multiplier: f32,
+    uplift: f32,
 };
 
 struct Log {
@@ -76,6 +77,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         cell.suspended_load -= amount;
         log_entry.deposited = amount;
     }
+
+    cell.elevation_residual += cell.uplift;
 
     hex_data[index] = cell;
     erosion_log[index] = log_entry;

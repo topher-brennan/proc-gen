@@ -21,8 +21,9 @@ pub const MEDIUM_RAIN: f32 = 21.0;
 pub const HIGH_RAIN: f32 = 34.0;
 // Used for NE basin.
 pub const VERY_HIGH_RAIN: f32 = 49.0;
+pub const YEARS_PER_STEP: f32 = 1.0 / 365.0 / 24.0 / 6.0;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
-pub const RAINFALL_FACTOR: f32 = 1.0 / 12.0 / 365.0 / 24.0 / 6.0;
+pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
 // Some dubiously realistic back-of-the-envelope math suggests maybe I should use 16.0 here,
 // but maybe I forgot a unit conversion? A multipler of about 500x is the absolute limit
 // before too little water from the main river will reach the sea.
@@ -53,27 +54,24 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN + 
 // An attempt to balance water in north and central regions mathematically.
 pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
-// In real life, continental shelves can extend as little as 50 miles or as much as 310 miles from shore.
-pub const CONTINENTAL_SHELF_WIDTH: usize = (0.0 * 2.0 / HEX_FACTOR) as usize;
-pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
-pub const CONTINENTAL_SHELF_INCREMENT: f32 = CONTINENTAL_SHELF_DEPTH as f32 / CONTINENTAL_SHELF_WIDTH as f32;
-pub const CONTINENTAL_SLOPE_GRADE: f32 = 0.05; // About 3 degrees.
-pub const CONTINENTAL_SLOPE_INCREMENT: f32 = CONTINENTAL_SLOPE_GRADE * HEX_SIZE * HEX_FACTOR;
-pub const ABYSSAL_PLAINS_MIN_DEPTH: f32 = 10_000.0;
-pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = 15_000.0;
-pub const CONTINENTAL_SLOPE_WIDTH: usize = ((ABYSSAL_PLAINS_MIN_DEPTH - CONTINENTAL_SHELF_DEPTH) / CONTINENTAL_SLOPE_INCREMENT) as usize;
+
+pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = 17_000.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
+pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
+pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
 pub const RIVER_SOURCE_X: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE + 1;
-pub const ABYSSAL_PLAINS_WIDTH: usize = TOTAL_SEA_WIDTH - CONTINENTAL_SHELF_WIDTH - CONTINENTAL_SLOPE_WIDTH;
-pub const ABYSSAL_PLAINS_INCREMENT: f32 = (ABYSSAL_PLAINS_MAX_DEPTH - ABYSSAL_PLAINS_MIN_DEPTH) / ABYSSAL_PLAINS_WIDTH as f32;
 pub const SEA_LEVEL: f32 = 0.0;
+// TODO: Do we still need this? Maybe for rainfall logic.
+pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
 
 // With Perlin noise, actual elevation will likely be lower than these numbers.
-// TODO: Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
-//       say by .01% per 60 rounds the simulation will run for.
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
 pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
+pub const ISLANDS_MAX_ELEVATION: f32 = 12_000.0;
+// Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
+//       say by .01% per 60 rounds the simulation will run for.
+pub const MAX_UPLIFT: f32 = 0.0000098; // Feet per step
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
