@@ -21,13 +21,18 @@ pub const MEDIUM_RAIN: f32 = 21.0;
 pub const HIGH_RAIN: f32 = 34.0;
 // Used for NE basin.
 pub const VERY_HIGH_RAIN: f32 = 49.0;
-pub const YEARS_PER_STEP: f32 = 1.0 / 365.0 / 24.0 / 6.0;
+pub const DAYS_PER_YEAR: f32 = 365.2422;
+pub const STEPS_PER_DAY: f32 = 24.0 * 6.0;
+pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
 // Some dubiously realistic back-of-the-envelope math suggests maybe I should use 16.0 here,
 // but maybe I forgot a unit conversion? A multipler of about 500x is the absolute limit
 // before too little water from the main river will reach the sea.
 pub const EVAPORATION_FACTOR: f32 = RAINFALL_FACTOR * 16.0;
+
+pub const TIDES_PER_DAY: f32 = 1.933;
+pub const TIDE_INTERVAL_STEPS: f32 = STEPS_PER_DAY / TIDES_PER_DAY;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
@@ -62,7 +67,7 @@ pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
 pub const RIVER_SOURCE_X: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE + 1;
 pub const SEA_LEVEL: f32 = 0.0;
 // TODO: Do we still need this? Maybe for rainfall logic.
-pub const CONTINENTAL_SHELF_DEPTH: f32 = 460.0;
+pub const CONTINENTAL_SHELF_DEPTH: f32 = 1000.0;
 
 // With Perlin noise, actual elevation will likely be lower than these numbers.
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
@@ -70,8 +75,7 @@ pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
 pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 12_000.0;
 // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
-//       say by .01% per 60 rounds the simulation will run for.
-pub const MAX_UPLIFT: f32 = 0.0000098; // Feet per step
+pub const MAX_UPLIFT: f32 = 0.00001; // Feet per step
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
@@ -79,7 +83,7 @@ pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
 // 0.015 results in less even filling and possibly tighter rivers.
 // Too high a value may result in water sloshing back and forth drilling
 // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
+pub const KD: f32 = 0.5; // deposition rate fraction
 
 pub const FLOW_FACTOR: f32 = 0.90;
 // Might take 7k-10k rounds to carve out the river valley I want.
@@ -90,7 +94,7 @@ pub const DEFAULT_ROUNDS: u32 = 4_800;
 // readily navigable, you might want a threshold of five or six feet. One foot
 // might work as a compromise (and show where relatively shallow-draft boats can
 // move freely, even if ones with deeper draft couldn't).
-pub const WATER_THRESHOLD: f32 = 1.0; // Feet
+pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
 
 
 pub const MAX_SLOPE: f32 = 1.00;
