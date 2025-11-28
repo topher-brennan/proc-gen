@@ -17,6 +17,7 @@ var<uniform> constants: Constants;
 struct Constants {
     hex_count: f32,
     sea_level: f32,
+    seasonal_rain_multiplier: f32,
     evaporation_factor: f32,
     width: f32,
     basin_x_boundary: f32,
@@ -43,6 +44,6 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let effective_depth = min(min(cell.water_depth, 18.0), max(height(cell), 0.0));
             hex_data[index].water_depth -= constants.evaporation_factor * effective_depth;
         }
-        hex_data[index].water_depth += cell.rainfall;
+        hex_data[index].water_depth += cell.rainfall * constants.seasonal_rain_multiplier;
     }
 } 

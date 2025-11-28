@@ -400,7 +400,7 @@ impl GpuSimulation {
         // Constants buffer (rain_per_step, hex_count) – rainfall shader
         let rain_constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Constants Buffer"),
-            size: std::mem::size_of::<[f32; 6]>() as u64, // Uses 6 constants
+            size: std::mem::size_of::<[f32; 7]>() as u64, // Uses 6 constants
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1066,16 +1066,16 @@ impl GpuSimulation {
     }
 
     // Run all simulation steps in a single batched command encoder
-    pub fn run_simulation_step_batched(&mut self, width: usize, height: usize, sea_level: f32, flow_factor: f32, max_flow: f32) {
+    pub fn run_simulation_step_batched(&mut self, width: usize, height: usize, sea_level: f32, seasonal_rain_multiplier: f32) {
         // Update all constant buffers first
         let total_cells = width * height;
         
         // Rainfall constants
-        let rain_constants = [total_cells as f32, sea_level, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32, CONTINENTAL_SHELF_DEPTH];
+        let rain_constants = [total_cells as f32, sea_level, seasonal_rain_multiplier, EVAPORATION_FACTOR, WIDTH_HEXAGONS as f32, (TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH) as f32, CONTINENTAL_SHELF_DEPTH];
         self.queue.write_buffer(&self.rain_constants_buffer, 0, bytemuck::cast_slice(&rain_constants));
         
         // Water routing constants
-        let routing_constants = [width as f32, height as f32, flow_factor, max_flow];
+        let routing_constants = [width as f32, height as f32, FLOW_FACTOR, MAX_FLOW];
         self.queue.write_buffer(&self.routing_constants_buffer, 0, bytemuck::cast_slice(&routing_constants));
         
         // Scatter constants - only write 2 f32s as the buffer was created for [f32; 2]

@@ -286,6 +286,8 @@ fn simulate_erosion(
 
     for step_offset in 0..steps {
         let step = starting_step + step_offset;
+        let seasonal_rain_multiplier = 1.0 + (step as f32 * 2.0 * std::f32::consts::PI * YEARS_PER_STEP + std::f32::consts::PI).cos();
+
         if step % log_steps == 0 {
             let gpu_hex_data = gpu_sim.download_hex_data();
             for (idx, h) in gpu_hex_data.iter().enumerate() {
@@ -408,7 +410,7 @@ fn simulate_erosion(
                 wet_cells,
                 wet_cells_percentage
             );
-            println!("  sea level: {:.3} ft", current_sea_level);
+            println!("  sea level: {:.3} ft  seasonal rain multiplier: {:.3}", current_sea_level, seasonal_rain_multiplier);
             println!(
                 "  source elevation {:.3} ft  source water depth {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
                 source_hex.elevation - current_sea_level,
@@ -453,7 +455,7 @@ fn simulate_erosion(
         // let tidal_adjustment: f32 = 3.0 * (2.0 * f32::PI * step as f32 / TIDE_INTERVAL_STEPS as f32).sin();
         let tidal_adjustment: f32 = 0.0;
 
-        gpu_sim.run_simulation_step_batched(width, height, current_sea_level + tidal_adjustment, FLOW_FACTOR, MAX_FLOW);
+        gpu_sim.run_simulation_step_batched(width, height, current_sea_level + tidal_adjustment, seasonal_rain_multiplier);
         current_sea_level = SEA_LEVEL + 0.02 * YEARS_PER_STEP * step as f32;
     }
 
