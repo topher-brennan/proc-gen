@@ -12,7 +12,7 @@ mod constants;
 use constants::*;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use noise::{NoiseFn, Perlin};
+use noise::{NoiseFn, Simplex};
 use clap::Parser;
 use std::fs::File;
 use csv::{Writer, Reader};
@@ -733,13 +733,13 @@ fn get_erruption_elevation(target_elevation: f32) -> f32 {
 }
 
 // Generates a value between 0 and 1.
-fn get_perlin_noise(perlin: &Perlin, input: f64, period: f64) -> f32 {
-    (perlin.get([input / period]) as f32 + 1.0) / 2.0
+fn get_simplex_noise(simplex: &Simplex, input: f64, period: f64) -> f32 {
+    (simplex.get([input / period, 0.0]) as f32 + 1.0) / 2.0
 }
 
 // Generates a value between 0 and 1.
-fn get_perlin_noise_for_hex(perlin: &Perlin, x: f64, y: f64, period: f64) -> f32 {
-    (perlin.get([x * HEX_FACTOR as f64 / period, y / period]) as f32 + 1.0) / 2.0
+fn get_simplex_noise_for_hex(simplex: &Simplex, x: f64, y: f64, period: f64) -> f32 {
+    (simplex.get([x * HEX_FACTOR as f64 / period, y / period]) as f32 + 1.0) / 2.0
 }
 
 // TODO: Library function for this?
@@ -750,13 +750,13 @@ fn get_white_noise(seed: u32, x: usize, y: usize) -> f32 {
 }
 
 // Generates a value between -COAST_WIDTH/2 and COAST_WIDTH/2.
-fn get_sea_deviation(perlin: &Perlin, y: f64, period: f64) -> i16 {
-    ((get_perlin_noise(perlin, y + HEIGHT_PIXELS as f64, period) - 0.5) * COAST_WIDTH as f32) as i16
+fn get_sea_deviation(simplex: &Simplex, y: f64, period: f64) -> i16 {
+    ((get_simplex_noise(simplex, y + HEIGHT_PIXELS as f64, period) - 0.5) * COAST_WIDTH as f32) as i16
 }
 
 // Generates a value between -12 and 12.
-fn get_land_deviation(perlin: &Perlin, x: f64, y: f64, period: f64) -> i16 {
-    ((get_perlin_noise_for_hex(perlin, x - WIDTH_HEXAGONS as f64, y, period) - 0.5) * 24.0 * 2.0) as i16
+fn get_land_deviation(simplex: &Simplex, x: f64, y: f64, period: f64) -> i16 {
+    ((get_simplex_noise_for_hex(simplex, x - WIDTH_HEXAGONS as f64, y, period) - 0.5) * 24.0 * 2.0) as i16
 }
 
 fn get_rainfall(rain_class: i32) -> f32 {
@@ -788,8 +788,8 @@ fn main() {
         println!("Loaded seed: {}, starting step: {}", loaded_seed, loaded_step);
         
         // Recalculate river_outlet_x from the seed (needed for simulation)
-        let perlin = Perlin::new(loaded_seed);
-        let sea_deviation_for_river_y: i16 = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+        let simplex = Simplex::new(loaded_seed);
+        let sea_deviation_for_river_y: i16 = get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
         let calculated_river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y as usize;
         
         (loaded_hex_map, loaded_seed, loaded_step, calculated_river_outlet_x)
@@ -803,12 +803,12 @@ fn main() {
         
         let mut hex_map = Vec::new();
 
-        let perlin = Perlin::new(seed);
+        let simplex = Simplex::new(seed);
         let transition_period = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
-        let sea_deviation_for_river_y: i16 = get_sea_deviation(&perlin, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+        let sea_deviation_for_river_y: i16 = get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
         
         let river_outlet_x = TOTAL_SEA_WIDTH - sea_deviation_for_river_y as usize;
-        let land_deviation_for_outlet = get_land_deviation(&perlin, river_outlet_x as f64, RIVER_Y as f64, 96.0);
+        let land_deviation_for_outlet = get_land_deviation(&simplex, river_outlet_x as f64, RIVER_Y as f64, 96.0);
 
         // Time hex map creation
         let hex_start = Instant::now();
@@ -816,31 +816,32 @@ fn main() {
         for y in 0..HEIGHT_PIXELS {
             hex_map.push(Vec::new());
             let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
-            let sea_deviation = get_sea_deviation(&perlin, y as f64, HEIGHT_PIXELS as f64 / 1.5);
+            let sea_deviation = get_sea_deviation(&simplex, y as f64, HEIGHT_PIXELS as f64 / 1.5);
             let shelf_deviation = sea_deviation;
-            // let shelf_deviation = get_sea_deviation(&perlin, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
-            let cut_factor = -0.06 - get_perlin_noise(&perlin, (y + HEIGHT_PIXELS * 5 / 2) as f64, HEIGHT_PIXELS as f64 / 1.5) * 0.06;
+            // let shelf_deviation = get_sea_deviation(&simplex, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
+            let cut_factor = -0.06 - get_simplex_noise(&simplex, (y + HEIGHT_PIXELS * 5 / 2) as f64, HEIGHT_PIXELS as f64 / 1.5) * 0.06;
 
             for x in 0..WIDTH_HEXAGONS {
                 let mut elevation = 0.0;
                 let mut uplift = 0.0;
             let adjusted_y = y as f64 + (x % 2) as f64 * 0.5;
-            let y_deviation = land_deviation_for_outlet - get_land_deviation(&perlin, x as f64, y as f64, 96.0);
+            let y_deviation = land_deviation_for_outlet - get_land_deviation(&simplex, x as f64, y as f64, 96.0);
             let deviated_x: usize = (x as i16 + shelf_deviation).max(0) as usize;
             let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
             let distance_from_coast = deviated_x as f32 - TOTAL_SEA_WIDTH as f32;
             let sea_width_for_river_y = TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
 
-            let map_third_noise = get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, HEIGHT_PIXELS as f64 / 3.0);
-            let transition_period_noise = get_perlin_noise_for_hex(&perlin, (x + WIDTH_HEXAGONS) as f64, adjusted_y, transition_period);
-            let coastal_noise = get_perlin_noise_for_hex(&perlin, (x + WIDTH_HEXAGONS * 2) as f64, adjusted_y, COAST_WIDTH as f64);
-            let perlin_noise = ((transition_period_noise + coastal_noise + map_third_noise) / 3.0).powf(3.0_f32.log2());
+            let map_third_noise = get_simplex_noise_for_hex(&simplex, x as f64, adjusted_y, HEIGHT_PIXELS as f64 / 3.0);
+            let transition_period_noise = get_simplex_noise_for_hex(&simplex, (x + WIDTH_HEXAGONS) as f64, adjusted_y, transition_period);
+            let coastal_noise = get_simplex_noise_for_hex(&simplex, (x + WIDTH_HEXAGONS * 2) as f64, adjusted_y, COAST_WIDTH as f64);
+            let big_hex_noise = get_simplex_noise_for_hex(&simplex, (x + WIDTH_HEXAGONS * 3) as f64, adjusted_y, 12.0);
+            let simplex_noise = ((transition_period_noise + coastal_noise + map_third_noise + big_hex_noise * 0.1) / 3.3).powf(3.0_f32.log2());
 
-            if perlin_noise < 0.0 || perlin_noise > 1.0 {
-                println!("Perlin noise out of range: {}", perlin_noise);
+            if simplex_noise < 0.0 || simplex_noise > 1.0 {
+                println!("Simplex noise out of range: {}", simplex_noise);
                 println!("x: {}, adjusted_y: {}, transition_period: {}, COAST_WIDTH: {}", x, adjusted_y, transition_period, COAST_WIDTH);
                 println!("map_third_noise: {}, transition_period_noise: {}, coastal_noise: {}", map_third_noise, transition_period_noise, coastal_noise);
-                panic!("Perlin noise out of range");
+                panic!("Simplex noise out of range");
             }
 
             if deviated_x < TOTAL_SEA_WIDTH {
@@ -850,9 +851,9 @@ fn main() {
                 if deviated_x < ISLANDS_ZONE_WIDTH {
                     let factor = (1.0 * (ISLANDS_ZONE_WIDTH - deviated_x) as f32 / transition_period as f32).min(1.0).max(0.0);
                     abyssal_plains_depth_adjustment += 0.1 * factor;
-                    elevation = perlin_noise * (ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment + ISLANDS_MAX_ELEVATION * factor) - ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment;
+                    elevation = simplex_noise * (ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment + ISLANDS_MAX_ELEVATION * factor) - ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment;
                 } else {
-                    elevation = (perlin_noise - 1.0) * ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment;
+                    elevation = (simplex_noise - 1.0) * ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment;
                 } 
             } else {
                 if deviated_y < NORTH_DESERT_HEIGHT {
@@ -872,20 +873,20 @@ fn main() {
                     // jumping the tracks, so to speak.
                     let mut factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2) / (transition_period as f32)).min(1.0);
                     factor2 = factor2 * 0.5 + 0.5;
-                    elevation = (perlin_noise + (1.0 - perlin_noise) * (1.0 - factor1) / 2.0) * NORTH_DESERT_MAX_ELEVATION * factor2;
+                    elevation = (simplex_noise + (1.0 - simplex_noise) * (1.0 - factor1) / 2.0) * NORTH_DESERT_MAX_ELEVATION * factor2;
                 } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     // Faster transition because it's a less dramatic change.
                     let factor = ((deviated_y - NORTH_DESERT_HEIGHT) as f32 / transition_period as f32 * 2.0).min(1.0);
-                    elevation = perlin_noise * ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
+                    elevation = simplex_noise * ((CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor + NORTH_DESERT_MAX_ELEVATION);
                 } else {
                     let factor = ((deviated_y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT) as f32 / transition_period as f32).min(1.0);
-                    elevation = perlin_noise * ((SOUTH_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
+                    elevation = simplex_noise * ((SOUTH_MOUNTAINS_MAX_ELEVATION - CENTRAL_HIGHLAND_MAX_ELEVATION) * factor + CENTRAL_HIGHLAND_MAX_ELEVATION);
                 }
 
                 if RIVER_Y - (transition_period as usize) < deviated_y && deviated_y < NORTH_DESERT_HEIGHT + (transition_period as usize) {
                     // Similarly this makes sure the river isn't too far south.
                     let factor = ((NORTH_DESERT_HEIGHT as f32 - deviated_y as f32) / (transition_period as f32)).abs().clamp(0.0, 1.0);
-                    elevation += (1.0 - perlin_noise) * (CENTRAL_HIGHLAND_MAX_ELEVATION * 0.3) * (1.0 - factor);
+                    elevation += (1.0 - simplex_noise) * (CENTRAL_HIGHLAND_MAX_ELEVATION * 0.3) * (1.0 - factor);
                 }
             }
 
@@ -987,8 +988,8 @@ fn main() {
                 suspended_load: 0.0,
                 rainfall: rainfall * RAINFALL_FACTOR,
                 // TODO: Fiddle with range, seems to help with coastlines and mountains but may make chanelization worse.
-                // erosion_multiplier: 0.95 + get_perlin_noise_for_hex(&perlin, x as f64, adjusted_y, 6.0) * 0.1,
-                erosion_multiplier: get_white_noise(seed, x, y + HEIGHT_PIXELS) * 0.1 + get_perlin_noise_for_hex(&perlin, x as f64, (y + HEIGHT_PIXELS) as f64, 6.0) * 0.1 + 0.90,
+                // erosion_multiplier: 0.95 + get_simplex_noise_for_hex(&simplex, x as f64, adjusted_y, 6.0) * 0.1,
+                erosion_multiplier: get_white_noise(seed, x, y + HEIGHT_PIXELS) * 0.1 + get_simplex_noise_for_hex(&simplex, x as f64, (y + HEIGHT_PIXELS) as f64, 6.0) * 0.1 + 0.90,
                 uplift,
                 original_land: elevation > SEA_LEVEL,
             });
