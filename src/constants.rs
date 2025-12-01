@@ -31,6 +31,7 @@ pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
 pub const EVAPORATION_FACTOR: f32 = YEARS_PER_STEP * 0.2;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
+pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const NORTH_DESERT_HEIGHT: usize = (6.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const NE_BASIN_HEIGHT: usize = NORTH_DESERT_HEIGHT;
@@ -58,6 +59,7 @@ pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RA
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
 pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = 17_000.0;
+pub const LAKE_MIN_ELEVATION: f32 = -2000.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
@@ -69,16 +71,17 @@ pub const CONTINENTAL_SHELF_DEPTH: f32 = 1000.0;
 
 // With Perlin noise, actual elevation will likely be lower than these numbers.
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
-pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 12_000.0;
-pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 20_000.0;
+pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 11_000.0;
+pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 17_000.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 12_000.0;
+pub const OUTLET_ELEVATION: f32 = 1000.0;
+pub const BOUNDARY_ELEVATION: f32 = 1.1 * OUTLET_ELEVATION;
 // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
 pub const MAX_UPLIFT: f32 = 0.00001; // Feet per step
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
 // Experimentally, a KD of 0.01 results in even filling of large lakes.
-// 0.015 results in less even filling and possibly tighter rivers.
 // Too high a value may result in water sloshing back and forth drilling
 // pits in lakes, not sure where the limit is though.
 pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
@@ -95,7 +98,7 @@ pub const DEFAULT_ROUNDS: u32 = 4_800;
 pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
 
 
-pub const MAX_SLOPE: f32 = 0.5;
+pub const MAX_SLOPE: f32 = 1.0;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SOUTH_MOUNTAINS_MAX_ELEVATION;

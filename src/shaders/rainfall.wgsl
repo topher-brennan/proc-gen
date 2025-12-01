@@ -34,16 +34,13 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Note to self: stop toying with removing evaporation, it's important to avoid weirdness
     // when a big lake empties.
-    // TODO: Consider gradually fading out rainfall rather than a hard stop.
-    if (total_elevation(cell) >= constants.sea_level - constants.continental_shelf_depth) {
-        // Don't evaporate in basins at edge of map.
-        if (index % u32(constants.width) <= u32(constants.basin_x_boundary)) {
-            // Once a body of water reaches 10' deep, let it fill until it overflows,
-            // creating a connection to the sea. But don't evaporate once already below
-            // sea level.
-            let effective_depth = min(min(cell.water_depth, 10.0), max(height(cell), 0.0));
-            hex_data[index].water_depth -= constants.evaporation_factor * effective_depth;
-        }
-        hex_data[index].water_depth += cell.rainfall * constants.seasonal_rain_multiplier;
+    // Don't evaporate in basins at edge of map.
+    if (index % u32(constants.width) <= u32(constants.basin_x_boundary)) {
+        // Once a body of water reaches 10' deep, let it fill until it overflows,
+        // creating a connection to the sea. But don't evaporate once already below
+        // sea level.
+        let effective_depth = min(min(cell.water_depth, 10.0), max(height(cell), 0.0));
+        hex_data[index].water_depth -= constants.evaporation_factor * effective_depth;
     }
+    hex_data[index].water_depth += cell.rainfall * constants.seasonal_rain_multiplier;
 } 

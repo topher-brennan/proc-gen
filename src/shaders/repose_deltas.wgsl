@@ -71,9 +71,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let neighbor_elev = total_elevation(hex_data[neighbor_index]);
             let diff = elev - neighbor_elev;
 
-            if (diff > C.hex_size * 0.5) {
+            if (diff > C.hex_size) {
                 // This slope is too steep. Move some elevation.
-                let excess = (diff - C.hex_size * 0.5) / 100.0;
+                let excess = (diff - C.hex_size) / 100.0;
                 var old_val: u32;
                 var new_val: u32;
                 // TODO: Alternatives to busy waiting here?

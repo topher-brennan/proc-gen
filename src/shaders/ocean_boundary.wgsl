@@ -50,10 +50,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = i32(index % width);
     let y = i32(index / width);
 
-    // TODO: This is supposed to result in outflows on the western and southern edges of the
-    // map. I could've sworn it was working before but now the southern outflows don't seem
-    // to work.
-    if (x != 0 && y != (i32(height) - 1)) {
+    if (x != 0 && y != 0 && y != (i32(height) - 1)) {
         return;
     }
 
