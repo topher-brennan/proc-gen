@@ -393,7 +393,20 @@ fn simulate_erosion(
 
             let wet_cells_percentage = wet_cells as f64 / cells_above_sea_level as f64 * 100.0;
 
-            let source_hex = &hex_map[RIVER_Y][RIVER_SOURCE_X];
+            // Find source_y as the y of hex with greatest water depth where y < NORTH_DESERT_HEIGHT and x = RIVER_SOURCE_X
+            let source_y: usize = hex_map.par_iter()
+                .enumerate()
+                .take(NORTH_DESERT_HEIGHT)
+                .filter_map(|(y, row)| {
+                    row.get(RIVER_SOURCE_X)
+                        .filter(|hex| hex.elevation > current_sea_level && hex.water_depth > WATER_THRESHOLD)
+                        .map(|hex| (y, hex.water_depth))
+                })
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+                .map(|(y, _)| y)
+                .unwrap_or(RIVER_Y);
+
+            let source_hex = &hex_map[source_y][RIVER_SOURCE_X];
             let outlet_hex = &hex_map[RIVER_Y][river_outlet_x];
             let target_delta_hex = &hex_map[RIVER_Y][river_outlet_x - 231];
 

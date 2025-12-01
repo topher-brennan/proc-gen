@@ -134,8 +134,7 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let target_index = get_hex_index(target_x, target_y);
         let target_hex = hex_data[target_index];
         let diff = height(hex) - height(target_hex);
-        // Old formula based on two-way fork rather than three-way
-        // let move_f = min(select(diff * constants.flow_factor, f, diff > f), constants.max_flow);
+
         var move_f = 0.0;
         if (2.0 * f <= diff) {
             move_f = f;
@@ -146,12 +145,11 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         move_f = min(move_f, constants.max_flow);
-        // Extra safety: never route more fluid than present
-        move_f = min(move_f, f);
 
         if (move_f > 0.0) {
-            let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
-            let load_outflow = sediment_fraction(hex) * move_f;
+            // Use min to ensure we don't move more water/sediment than is present.
+            let water_outflow = min((1.0 - sediment_fraction(hex)) * move_f, hex.water_depth);
+            let load_outflow = min(sediment_fraction(hex) * move_f, hex.suspended_load);
 
             // Subtract outflow from our own next buffers (atomic for thread safety)
             // We use compareExchange loop because atomicAdd only works on integers
