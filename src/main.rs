@@ -952,8 +952,7 @@ fn main() {
                     let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
                     let (cx2, cy2) = hex_coordinates_to_cartesian(TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32, RIVER_Y as i32);
                     // Area is oval-shaped, not circular, with the longer axis running east-west.
-                    // TODO: Experiment with ratio of major axis to minor axis, too long might look weird but too short can result in the river
-                    // jumping the tracks, so to speak.
+                    // After a lot of experimentation, 2:1 ratio seems to work well.
                     let mut factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2) / (TRANSITION_PERIOD as f32)).min(1.0);
 
                     let min_elevation = BOUNDARY_ELEVATION * (1.0 - factor1) * factor2 + (1.0 - factor2) * OUTLET_ELEVATION + factor1 * LAKE_MIN_ELEVATION;

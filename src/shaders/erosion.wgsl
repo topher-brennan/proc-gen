@@ -75,6 +75,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         cell.elevation_residual = residual;
         cell.suspended_load -= amount;
+        cell.suspended_load = max(cell.suspended_load, 0.0);
         log_entry.deposited = amount;
     }
 

@@ -27,6 +27,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
     if(index >= arrayLength(&hex_data)) { return; }
 
-    hex_data[index].water_depth = bitcast<f32>(atomicLoad(&next_water[index]));
-    hex_data[index].suspended_load = bitcast<f32>(atomicLoad(&next_load[index]));
+    hex_data[index].water_depth = max(bitcast<f32>(atomicLoad(&next_water[index])), 0.0);
+    hex_data[index].suspended_load = max(bitcast<f32>(atomicLoad(&next_load[index])), 0.0);
 } 

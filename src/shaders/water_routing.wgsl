@@ -147,9 +147,8 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         move_f = min(move_f, constants.max_flow);
 
         if (move_f > 0.0) {
-            // Use min to ensure we don't move more water/sediment than is present.
-            let water_outflow = min((1.0 - sediment_fraction(hex)) * move_f, hex.water_depth);
-            let load_outflow = min(sediment_fraction(hex) * move_f, hex.suspended_load);
+            let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
+            let load_outflow = sediment_fraction(hex) * move_f;
 
             // Subtract outflow from our own next buffers (atomic for thread safety)
             // We use compareExchange loop because atomicAdd only works on integers

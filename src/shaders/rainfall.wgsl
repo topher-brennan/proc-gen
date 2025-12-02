@@ -41,6 +41,7 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // sea level.
         let effective_depth = min(min(cell.water_depth, 10.0), max(height(cell), 0.0));
         hex_data[index].water_depth -= constants.evaporation_factor * effective_depth;
+        hex_data[index].water_depth = max(hex_data[index].water_depth, 0.0);
     }
     hex_data[index].water_depth += cell.rainfall * constants.seasonal_rain_multiplier;
 } 

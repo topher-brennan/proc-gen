@@ -105,5 +105,3 @@ pub const MAX_ELEVATION: f32 = SEA_LEVEL + SOUTH_MOUNTAINS_MAX_ELEVATION;
 pub const LOG_ROUNDS: u32 = 100;
 
 pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
-
-// TODO: Configure island chain to be about 500 miles off the coast.
