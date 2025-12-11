@@ -1,6 +1,7 @@
 // Calculates the change in elevation (delta) for each cell based on the angle of repose.
 // If a cell is much higher than a neighbor, it "loses" elevation, and the neighbor "gains" it.
 // This uses atomics to safely handle multiple neighbors trying to modify the same cell's delta.
+// Constants are prepended via include_str! in Rust
 
 struct Hex {
     elevation:          f32,
@@ -12,42 +13,33 @@ struct Hex {
     uplift:             f32,
 };
 
-struct Consts {
-    width: f32,
-    height: f32,
-    hex_size: f32,
-};
-
 @group(0) @binding(0)
 var<storage, read> hex_data: array<Hex>;
 @group(0) @binding(1)
 var<storage, read_write> delta_buffer: array<atomic<u32>>;
-
-@group(0) @binding(2)
-var<uniform> C: Consts;
 
 // Standard hex grid utility functions
 const EVEN_OFFSETS: array<vec2<i32>, 6> = array<vec2<i32>, 6>(vec2<i32>(1,0), vec2<i32>(0,1), vec2<i32>(-1,0), vec2<i32>(0,-1), vec2<i32>(-1,-1), vec2<i32>(1,-1));
 const ODD_OFFSETS: array<vec2<i32>, 6> = array<vec2<i32>, 6>(vec2<i32>(1,0), vec2<i32>(0,1), vec2<i32>(-1,0), vec2<i32>(0,-1), vec2<i32>(-1,1), vec2<i32>(1,1));
 
 fn is_valid_coord(x: i32, y: i32) -> bool {
-    return x >= 0 && y >= 0 && x < i32(C.width) && y < i32(C.height);
+    return x >= 0 && y >= 0 && x < i32(WIDTH) && y < i32(HEIGHT);
 }
 
 fn get_hex_index(x: i32, y: i32) -> u32 {
-    return u32(y * i32(C.width) + x);
+    return u32(y * i32(WIDTH) + x);
 }
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    let total_hexes = u32(C.width * C.height);
+    let total_hexes = u32(WIDTH * HEIGHT);
     if (index >= total_hexes) {
         return;
     }
 
-    let x = i32(index % u32(C.width));
-    let y = i32(index / u32(C.width));
+    let x = i32(index % u32(WIDTH));
+    let y = i32(index / u32(WIDTH));
     let elev = total_elevation(hex_data[index]);
 
     let even_col = (x & 1) == 0;
@@ -71,9 +63,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let neighbor_elev = total_elevation(hex_data[neighbor_index]);
             let diff = elev - neighbor_elev;
 
-            if (diff > C.hex_size) {
+            if (diff > HEX_SIZE) {
                 // This slope is too steep. Move some elevation.
-                let excess = (diff - C.hex_size) / 100.0;
+                let excess = (diff - HEX_SIZE) / 100.0;
                 var old_val: u32;
                 var new_val: u32;
                 // TODO: Alternatives to busy waiting here?

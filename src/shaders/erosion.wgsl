@@ -1,5 +1,6 @@
 // GPU implementation of erosion / deposition per cell.
 // Matches logic in main_original.rs Phase-4.
+// Constants are prepended via include_str! in Rust
 
 struct Hex {
     elevation: f32,
@@ -18,23 +19,18 @@ struct Log {
     _pad2: f32,
 };
 
+struct RuntimeParams {
+    sea_level: f32,
+};
+
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 @group(0) @binding(1)
 var<storage, read> min_elev: array<f32>;   // output from min_neigh pass
-@group(0) @binding(3)
-var<storage, read_write> erosion_log: array<Log>;
-
-struct Params {
-    kc: f32,
-    ke: f32,
-    kd: f32,
-    max_slope: f32,
-    max_elev: f32,
-    hex_size: f32,
-};
 @group(0) @binding(2)
-var<uniform> P : Params;
+var<storage, read_write> erosion_log: array<Log>;
+@group(0) @binding(3)
+var<uniform> params: RuntimeParams;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -47,11 +43,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[index]), 0.0);
-    let capacity = P.kc * min(cell.water_depth, min(height_diff, P.hex_size));
+    let capacity = KC * min(cell.water_depth, min(height_diff, HEX_SIZE));
 
     if (cell.suspended_load < capacity) {
         // erode
-        let amount = P.ke * (capacity - cell.suspended_load) * cell.erosion_multiplier;
+        let amount = KE * (capacity - cell.suspended_load) * cell.erosion_multiplier;
 
         residual -= amount;
         let adj = trunc(residual * 512.0) / 512.0;
@@ -63,9 +59,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         log_entry.eroded = amount;
     } else {
         // deposit
-        var amount = P.kd * (cell.suspended_load - capacity);
-        if (cell.elevation + amount > P.max_elev) {
-            amount = P.max_elev - cell.elevation;
+        var amount = KD * (cell.suspended_load - capacity);
+        if (cell.elevation + amount > MAX_ELEVATION) {
+            amount = MAX_ELEVATION - cell.elevation;
         }
 
         residual += amount;
@@ -79,6 +75,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         log_entry.deposited = amount;
     }
 
+    let x = i32(index % u32(WIDTH));
+    let y = i32(index / u32(WIDTH));
+
+    if x > i32(BASIN_X_BOUNDARY) && y < i32(BASIN_Y_BOUNDARY) && cell.elevation < NE_BASIN_MIN_ELEVATION {
+        cell.elevation = NE_BASIN_MIN_ELEVATION + params.sea_level;
+    }
     cell.elevation_residual += cell.uplift;
 
     hex_data[index] = cell;

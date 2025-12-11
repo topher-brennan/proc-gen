@@ -32,11 +32,14 @@ pub const EVAPORATION_FACTOR: f32 = YEARS_PER_STEP * 0.2;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
 pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
+pub const DEVIATION_PERIOD: f64 = 96.0;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const NORTH_DESERT_HEIGHT: usize = (6.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const NE_BASIN_HEIGHT: usize = NORTH_DESERT_HEIGHT;
-pub const CENTRAL_HIGHLAND_HEIGHT: usize = (11.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize - NORTH_DESERT_HEIGHT;
-pub const SOUTH_MOUNTAINS_HEIGHT: usize = HEIGHT_PIXELS - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT;
+pub const CENTRAL_HIGHLAND_HEIGHT: usize =
+    (11.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize - NORTH_DESERT_HEIGHT;
+pub const SOUTH_MOUNTAINS_HEIGHT: usize =
+    HEIGHT_PIXELS - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT;
 
 // 800 miles in hexes.
 pub const MAIN_RIVER_WIDTH: usize = (800.0 * 2.0 / HEX_FACTOR) as usize;
@@ -50,15 +53,20 @@ pub const NORTH_DESERT_WIDTH: usize = MAIN_RIVER_WIDTH + DELTA_SEED_WIDTH;
 pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
 pub const COAST_FRINGE: usize = 18;
 pub const NE_BASIN_FRINGE: usize = 4;
-pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN) * NORTH_DESERT_HEIGHT as f32;
+pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN
+    + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN)
+    * NORTH_DESERT_HEIGHT as f32;
 // Rain on the part of the central highland whose east-west extent corresponds to the north desert.
-pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * LOW_RAIN) * CENTRAL_HIGHLAND_HEIGHT as f32;
+pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN
+    + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * LOW_RAIN)
+    * CENTRAL_HIGHLAND_HEIGHT as f32;
 // An attempt to balance water in north and central regions mathematically.
 // TODO: Maybe fix at 140?
-pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN) / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
+pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN)
+    / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
-pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = 17_000.0;
+pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -17_000.0;
 pub const LAKE_MIN_ELEVATION: f32 = -2000.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
@@ -74,17 +82,18 @@ pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 11_000.0;
 pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 17_000.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 12_000.0;
-pub const OUTLET_ELEVATION: f32 = 1000.0;
-pub const BOUNDARY_ELEVATION: f32 = 1.1 * OUTLET_ELEVATION;
+pub const OUTLET_ELEVATION: f32 = 600.0;
+pub const BOUNDARY_ELEVATION: f32 = 2400.0;
+pub const NE_BASIN_MIN_ELEVATION: f32 = 600.0;
 // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
 pub const MAX_UPLIFT: f32 = 0.00001; // Feet per step
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
-// Experimentally, a KD of 0.01 results in even filling of large lakes.
-// Too high a value may result in water sloshing back and forth drilling
-// pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
+                               // Experimentally, a KD of 0.01 results in even filling of large lakes.
+                               // Too high a value may result in water sloshing back and forth drilling
+                               // pits in lakes, not sure where the limit is though.
+pub const KD: f32 = 0.01; // deposition rate fraction
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.
@@ -97,11 +106,11 @@ pub const DEFAULT_ROUNDS: u32 = 4_800;
 // move freely, even if ones with deeper draft couldn't).
 pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
 
-
 pub const MAX_SLOPE: f32 = 1.0;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SOUTH_MOUNTAINS_MAX_ELEVATION;
 pub const LOG_ROUNDS: u32 = 100;
 
-pub const BIG_VOLCANO_X: usize = TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;
+pub const BIG_VOLCANO_X: usize =
+    TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;

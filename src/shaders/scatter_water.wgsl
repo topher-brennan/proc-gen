@@ -8,11 +8,6 @@ struct Hex {
     uplift: f32,
 }
 
-struct Constants {
-    width: f32,
-    height: f32,
-}
-
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 @group(0) @binding(1)

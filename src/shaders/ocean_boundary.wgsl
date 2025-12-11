@@ -1,5 +1,6 @@
 // Applies the ocean boundary condition to the west-most column (x=0).
 // Sets water depth to sea level and flushes all suspended sediment.
+// Constants are prepended via include_str! in Rust
 
 struct Hex {
     elevation: f32,
@@ -18,29 +19,26 @@ struct Outflow {
     _pad2: f32,
 };
 
-// Update Params to 4 floats for 16-byte alignment
-struct Params {
+// Runtime parameter - sea level can change over time
+struct RuntimeParams {
     sea_level: f32,
-    height: f32,
-    width: f32,
-    abyssal_plain_depth: f32,
 };
 
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 
 @group(0) @binding(1)
-var<uniform> params: Params;
+var<uniform> params: RuntimeParams;
 
-// New storage buffer for per-row outflow values
+// Storage buffer for per-row outflow values
 @group(0) @binding(2)
 var<storage, read_write> out_data: array<Outflow>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    let width = u32(params.width);
-    let height = u32(params.height);
+    let width = u32(WIDTH);
+    let height = u32(HEIGHT);
     let total_hexes = width * height;
 
     if (index >= total_hexes) {
@@ -50,7 +48,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = i32(index % width);
     let y = i32(index / width);
 
-    if (x != 0 && y != 0 && y != (i32(height) - 1)) {
+    if (x > 0 && y > 0 && y < (i32(height) - 1)) {
         return;
     }
 
@@ -64,7 +62,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let fluid_out: f32 = min(height(cell) - params.sea_level, total_fluid(cell));
     water_out = fluid_out * (1.0 - sediment_fraction(cell));
     // TODO: Continue experimenting with turning sediment outflows on/off.
-    if (fluid_out < 0.0 || total_elevation(cell) > -1.0 * params.abyssal_plain_depth) {
+    if (fluid_out < 0.0 || total_elevation(cell) > ABYSSAL_PLAINS_MAX_DEPTH) {
         sediment_out = fluid_out * sediment_fraction(cell);
     }
 

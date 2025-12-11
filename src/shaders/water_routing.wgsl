@@ -1,3 +1,5 @@
+// Constants are prepended via include_str! in Rust
+
 struct Hex {
     elevation: f32,
     water_depth: f32,
@@ -8,14 +10,6 @@ struct Hex {
     uplift: f32,
 }
 
-struct Constants {
-    width: f32,
-    height: f32,
-    flow_factor: f32,
-    max_flow: f32,
-}
-
-// TODO: read_write vs. read
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
 
@@ -24,9 +18,6 @@ var<storage, read_write> next_water: array<atomic<i32>>;
 
 @group(0) @binding(2)
 var<storage, read_write> next_load: array<atomic<i32>>;
-
-@group(0) @binding(3)
-var<uniform> constants: Constants;
 
 const NO_TARGET: u32 = 0xFFFFFFFFu;
 
@@ -55,19 +46,19 @@ fn get_neighbor_coord(x: i32, y: i32, offset: vec2<i32>) -> vec2<i32> {
 }
 
 fn is_valid_coord(x: i32, y: i32) -> bool {
-    return x >= 0 && x < i32(constants.width) && y >= 0 && y < i32(constants.height);
+    return x >= 0 && x < i32(WIDTH) && y >= 0 && y < i32(HEIGHT);
 }
 
 fn get_hex_index(x: i32, y: i32) -> u32 {
-    return u32(y * i32(constants.width) + x);
+    return u32(y * i32(WIDTH) + x);
 }
 
 
 @compute @workgroup_size(256)
 fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    let width = u32(constants.width);
-    let height = u32(constants.height);
+    let width = u32(WIDTH);
+    let height = u32(HEIGHT);
     let total_hexes = width * height;
     
     if (index >= total_hexes) {
@@ -139,12 +130,12 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (2.0 * f <= diff) {
             move_f = f;
         } else if (f < diff && diff < 2.0 * f) {
-            move_f = (diff - f) + (2.0 * f - diff) * constants.flow_factor;
+            move_f = (diff - f) + (2.0 * f - diff) * FLOW_FACTOR;
         } else { // diff <= f
-            move_f = diff * constants.flow_factor;
+            move_f = diff * FLOW_FACTOR;
         }
 
-        move_f = min(move_f, constants.max_flow);
+        move_f = min(move_f, MAX_FLOW);
 
         if (move_f > 0.0) {
             let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
