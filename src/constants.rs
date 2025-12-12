@@ -83,17 +83,18 @@ pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 11_000.0;
 pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 17_000.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 12_000.0;
 pub const OUTLET_ELEVATION: f32 = 600.0;
-pub const BOUNDARY_ELEVATION: f32 = 2400.0;
+pub const BOUNDARY_ELEVATION: f32 = 2000.0;
 pub const NE_BASIN_MIN_ELEVATION: f32 = 600.0;
-// Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
-pub const MAX_UPLIFT: f32 = 0.00001; // Feet per step
 
-pub const KC: f32 = 1.5; // capacity coefficient
+
+pub const KC: f32 = 3.0; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // Experimentally, a KD of 0.01 results in even filling of large lakes.
                                // Too high a value may result in water sloshing back and forth drilling
                                // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 0.01; // deposition rate fraction
+pub const KD: f32 = YEARS_PER_STEP * 4.0; // deposition rate fraction
+// Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
+pub const MAX_UPLIFT: f32 = YEARS_PER_STEP * KC * KE * 2.5; // Feet per step
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.
@@ -104,7 +105,8 @@ pub const DEFAULT_ROUNDS: u32 = 4_800;
 // readily navigable, you might want a threshold of five or six feet. One foot
 // might work as a compromise (and show where relatively shallow-draft boats can
 // move freely, even if ones with deeper draft couldn't).
-pub const WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
+pub const LOW_WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
+pub const HIGH_WATER_THRESHOLD: f32 = 7.0; // Feet
 
 pub const MAX_SLOPE: f32 = 1.0;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;

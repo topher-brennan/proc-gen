@@ -8,6 +8,7 @@ struct Hex {
     elevation_residual: f32,
     erosion_multiplier: f32,
     uplift: f32,
+    water_depth_residual: f32,
 }
 
 // Runtime uniform - changes each frame

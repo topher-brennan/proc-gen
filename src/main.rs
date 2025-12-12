@@ -11,7 +11,7 @@ use pollster;
 mod constants;
 use clap::Parser;
 use constants::*;
-use csv::{Reader, Writer};
+use csv::{ReaderBuilder, WriterBuilder};
 use noise::{NoiseFn, Simplex};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -110,7 +110,7 @@ fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> f32 {
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
-    if elevation < SEA_LEVEL {
+    if elevation < BASE_SEA_LEVEL {
         let normalized_elevation =
             ((elevation - ABYSSAL_PLAINS_MAX_DEPTH) / (-1.0 * ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
         if normalized_elevation < 0.0 {
@@ -183,6 +183,7 @@ fn upload_hex_data(hex_map: &Vec<Vec<Hex>>, gpu_sim: &GpuSimulation) {
                 residual_elevation: 0.0,
                 erosion_multiplier: h.erosion_multiplier,
                 uplift: h.uplift,
+                residual_water_depth: 0.0,
             });
         }
     }
@@ -198,7 +199,7 @@ fn download_hex_data(gpu_sim: &GpuSimulation, hex_map: &mut Vec<Vec<Hex>>) {
         let x = idx % width;
         let cell = &mut hex_map[y][x];
         cell.elevation = h.elevation + h.residual_elevation;
-        cell.water_depth = h.water_depth;
+        cell.water_depth = h.water_depth + h.residual_water_depth;
         cell.suspended_load = h.suspended_load;
         cell.erosion_multiplier = h.erosion_multiplier;
         cell.uplift = h.uplift;
@@ -281,7 +282,7 @@ fn fill_sea(hex_map: &mut Vec<Vec<Hex>>) {
         for x in 0..width {
             if reachable[y][x] {
                 let cell = &mut hex_map[y][x];
-                cell.water_depth = SEA_LEVEL - cell.elevation;
+                cell.water_depth = BASE_SEA_LEVEL - cell.elevation;
             }
         }
     }
@@ -308,7 +309,7 @@ fn simulate_erosion(
     let mut total_sediment_out = 0.0f32;
 
     // TODO: Vary sea level over time.
-    let mut current_sea_level = SEA_LEVEL;
+    let mut current_sea_level = BASE_SEA_LEVEL;
 
     upload_hex_data(hex_map, &gpu_sim);
 
@@ -317,8 +318,8 @@ fn simulate_erosion(
         NORTH_DESERT_WIDTH, NE_BASIN_WIDTH, TOTAL_LAND_WIDTH, TOTAL_SEA_WIDTH
     );
     println!(
-        "  SEA_LEVEL {}  NORTH_DESERT_HEIGHT {}  CENTRAL_HIGHLAND_HEIGHT {}  SOUTH_MOUNTAINS_HEIGHT {}",
-        SEA_LEVEL, NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT
+        "  BASE_SEA_LEVEL {}  NORTH_DESERT_HEIGHT {}  CENTRAL_HIGHLAND_HEIGHT {}  SOUTH_MOUNTAINS_HEIGHT {}",
+        BASE_SEA_LEVEL, NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT
     );
     println!(
         "  RAINFALL_FACTOR {}  EVAPORATION_FACTOR {}",
@@ -397,7 +398,7 @@ fn simulate_erosion(
                 .map(|row| {
                     row.iter()
                         .filter(|h| {
-                            h.elevation > current_sea_level && h.water_depth > WATER_THRESHOLD
+                            h.elevation > current_sea_level && h.water_depth > LOW_WATER_THRESHOLD
                         })
                         .count()
                 })
@@ -413,7 +414,7 @@ fn simulate_erosion(
                 .filter_map(|(y, row)| {
                     row.get(RIVER_SOURCE_X)
                         .filter(|hex| {
-                            hex.elevation > current_sea_level && hex.water_depth > WATER_THRESHOLD
+                            hex.elevation > current_sea_level && hex.water_depth > LOW_WATER_THRESHOLD
                         })
                         .map(|hex| (y, hex.water_depth))
                 })
@@ -568,7 +569,7 @@ fn simulate_erosion(
             current_sea_level + tidal_adjustment,
             seasonal_rain_multiplier,
         );
-        current_sea_level = SEA_LEVEL + 0.02 * YEARS_PER_STEP * step as f32;
+        current_sea_level = BASE_SEA_LEVEL + 0.02 * YEARS_PER_STEP * step as f32;
     }
 
     download_hex_data(&gpu_sim, hex_map);
@@ -611,7 +612,7 @@ fn simulate_erosion(
         .par_iter()
         .map(|row| {
             row.iter()
-                .filter(|h| h.water_depth <= WATER_THRESHOLD)
+                .filter(|h| h.water_depth <= LOW_WATER_THRESHOLD)
                 .min_by_key(|h| h.coordinate.0)
         })
         .flatten()
@@ -622,7 +623,7 @@ fn simulate_erosion(
         .take(NORTH_DESERT_HEIGHT)
         .map(|row| {
             row.iter()
-                .filter(|h| h.water_depth <= WATER_THRESHOLD)
+                .filter(|h| h.water_depth <= LOW_WATER_THRESHOLD)
                 .min_by_key(|h| h.coordinate.0)
         })
         .flatten()
@@ -634,7 +635,7 @@ fn simulate_erosion(
         .take(CENTRAL_HIGHLAND_HEIGHT)
         .map(|row| {
             row.iter()
-                .filter(|h| h.water_depth <= WATER_THRESHOLD)
+                .filter(|h| h.water_depth <= LOW_WATER_THRESHOLD)
                 .min_by_key(|h| h.coordinate.0)
         })
         .flatten()
@@ -694,12 +695,20 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
 
 fn save_simulation_state_csv(path: &str, hex_map: &Vec<Vec<Hex>>, seed: u32, step: u32) {
     let file = File::create(path).expect("Failed to create CSV file");
-    let mut wtr = Writer::from_writer(file);
+    let mut wtr = WriterBuilder::new().flexible(true).from_writer(file);
 
-    // Write header row with seed and step count
+    // Write mini-table for seed and step at the top
+    wtr.write_record(&["seed", "step"])
+        .expect("Failed to write metadata header");
+    wtr.write_record(&[seed.to_string(), step.to_string()])
+        .expect("Failed to write metadata values");
+
+    // Blank separator row
+    wtr.write_record(&[""])
+        .expect("Failed to write separator row");
+
+    // Write main hex data header
     wtr.write_record(&[
-        "seed",
-        "step",
         "x",
         "y",
         "elevation",
@@ -724,8 +733,6 @@ fn save_simulation_state_csv(path: &str, hex_map: &Vec<Vec<Hex>>, seed: u32, ste
             let uplift_bits = hex.uplift.to_bits();
 
             wtr.write_record(&[
-                seed.to_string(),
-                step.to_string(),
                 x.to_string(),
                 y.to_string(),
                 elevation_bits.to_string(),
@@ -745,30 +752,37 @@ fn save_simulation_state_csv(path: &str, hex_map: &Vec<Vec<Hex>>, seed: u32, ste
 
 fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32) {
     let file = File::open(path).expect("Failed to open CSV file");
-    let mut rdr = Reader::from_reader(file);
+    let mut rdr = ReaderBuilder::new().flexible(true).from_reader(file);
 
     let mut hex_map: Vec<Vec<Hex>> = Vec::new();
     let mut seed = 0u32;
     let mut step = 0u32;
-    let mut first_row = true;
+    let mut row_index = 0usize;
 
     for result in rdr.records() {
         let record = result.expect("Failed to read CSV record");
+        row_index += 1;
 
-        if first_row {
-            // Skip header row
-            first_row = false;
+        // Row 1: metadata values (seed, step) - header was consumed by Reader
+        if row_index == 1 {
+            seed = record[0].parse().expect("Failed to parse seed");
+            step = record[1].parse().expect("Failed to parse step");
             continue;
         }
 
-        let x: usize = record[2].parse().expect("Failed to parse x coordinate");
-        let y: usize = record[3].parse().expect("Failed to parse y coordinate");
-
-        // Parse seed and step from first data row
-        if hex_map.is_empty() {
-            seed = record[0].parse().expect("Failed to parse seed");
-            step = record[1].parse().expect("Failed to parse step");
+        // Row 2: blank separator - skip
+        if row_index == 2 {
+            continue;
         }
+
+        // Row 3: hex data header - skip
+        if row_index == 3 {
+            continue;
+        }
+
+        // Row 4+: hex data
+        let x: usize = record[0].parse().expect("Failed to parse x coordinate");
+        let y: usize = record[1].parse().expect("Failed to parse y coordinate");
 
         // Ensure we have enough rows
         while hex_map.len() <= y {
@@ -791,17 +805,17 @@ fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32) {
         }
 
         // Convert bitcast values back to floats
-        let elevation_bits: u32 = record[4].parse().expect("Failed to parse elevation bits");
-        let water_depth_bits: u32 = record[5].parse().expect("Failed to parse water_depth bits");
-        let suspended_load_bits: u32 = record[6]
+        let elevation_bits: u32 = record[2].parse().expect("Failed to parse elevation bits");
+        let water_depth_bits: u32 = record[3].parse().expect("Failed to parse water_depth bits");
+        let suspended_load_bits: u32 = record[4]
             .parse()
             .expect("Failed to parse suspended_load bits");
-        let rainfall_bits: u32 = record[7].parse().expect("Failed to parse rainfall bits");
-        let erosion_multiplier_bits: u32 = record[8]
+        let rainfall_bits: u32 = record[5].parse().expect("Failed to parse rainfall bits");
+        let erosion_multiplier_bits: u32 = record[6]
             .parse()
             .expect("Failed to parse erosion_multiplier bits");
-        let uplift_bits: u32 = record[9].parse().expect("Failed to parse uplift bits");
-        let original_land: bool = record[10].parse().expect("Failed to parse original_land");
+        let uplift_bits: u32 = record[7].parse().expect("Failed to parse uplift bits");
+        let original_land: bool = record[8].parse().expect("Failed to parse original_land");
 
         hex_map[y][x] = Hex {
             coordinate: (x, y),
@@ -858,10 +872,10 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], sea_level: f32, sho
             let hex_y = hex_y.min(HEIGHT_PIXELS - 1);
 
             let hex = &hex_map[hex_y as usize][hex_x as usize];
-            let color = if show_water && hex.water_depth > WATER_THRESHOLD {
+            let color = if show_water && hex.water_depth > LOW_WATER_THRESHOLD {
                 let r = 0u8;
-                let g = (255.0 * 0.4 * (1.0 - hex.water_depth / 7.0)).max(0.0) as u8;
-                let b = (255.0 * (0.4 + 0.6 * hex.water_depth / 7.0)).max(0.0) as u8;
+                let g = (255.0 * 0.4 * (1.0 - hex.water_depth / HIGH_WATER_THRESHOLD)).max(0.0) as u8;
+                let b = (255.0 * (0.4 + 0.6 * hex.water_depth / HIGH_WATER_THRESHOLD)).max(0.0) as u8;
                 (r as u32) << 16 | (g as u32) << 8 | (b as u32)
             } else {
                 let Rgb([r, g, b]) = elevation_to_color(hex.elevation - sea_level);
@@ -1335,7 +1349,7 @@ fn main() {
                             20.0,
                         ) * 0.05,
                     uplift,
-                    original_land: elevation > SEA_LEVEL,
+                    original_land: elevation > BASE_SEA_LEVEL,
                 });
             }
         }

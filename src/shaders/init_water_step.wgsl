@@ -10,6 +10,7 @@ struct Hex {
     elevation_residual: f32,
     erosion_multiplier: f32,
     uplift: f32,
+    water_depth_residual: f32,
 }
 
 @group(0) @binding(0)

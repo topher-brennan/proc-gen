@@ -72,6 +72,7 @@ pub struct HexGpu {
     pub residual_elevation: f32,
     pub erosion_multiplier: f32,
     pub uplift: f32,
+    pub residual_water_depth: f32,
 }
 
 #[repr(C)]

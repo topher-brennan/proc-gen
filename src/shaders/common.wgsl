@@ -17,3 +17,7 @@ fn sediment_fraction(cell: Hex) -> f32 {
 fn total_elevation(cell: Hex) -> f32 {
     return cell.elevation + cell.elevation_residual;
 }
+
+fn total_water_depth(cell: Hex) -> f32 {
+    return cell.water_depth + cell.water_depth_residual;
+}
