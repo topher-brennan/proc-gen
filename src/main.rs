@@ -293,7 +293,10 @@ fn simulate_erosion(
     steps: u32,
     seed: u32,
     starting_step: u32,
-) -> f32 {
+    initial_max_elevation: f32,
+    initial_avg_elevation: f32,
+    prior_elapsed_secs: f64,
+) -> (f32, f64) {
     let water_start = Instant::now();
 
     let height = HEIGHT_PIXELS as usize;
@@ -458,11 +461,18 @@ fn simulate_erosion(
                     |acc, val| (acc.0.min(val.0), acc.1.max(val.1)),
                 );
 
-            let total_land: f64 = hex_map
+            let (total_land, original_land_count): (f64, usize) = hex_map
                 .iter()
                 .flat_map(|row| row.iter().filter(|h| h.original_land))
-                .map(|h| (h.elevation - current_sea_level) as f64)
-                .sum();
+                .fold((0.0, 0), |(sum, count), h| {
+                    (sum + (h.elevation - current_sea_level) as f64, count + 1)
+                });
+
+            let avg_elevation = if original_land_count > 0 {
+                (total_land / original_land_count as f64) as f32
+            } else {
+                0.0
+            };
 
             let net_land: f64 = hex_map
                 .iter()
@@ -475,6 +485,9 @@ fn simulate_erosion(
                 .flat_map(|row| row.iter())
                 .map(|h| h.suspended_load as f64)
                 .sum();
+
+            let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
+            let total_elapsed = std::time::Duration::from_secs_f64(total_elapsed_secs);
 
             // TODO(topher): Add tenths of rounds.
             println!(
@@ -508,10 +521,18 @@ fn simulate_erosion(
                 total_land, net_land, total_sediment
             );
             println!(
-                "  min elevation: {:.3} ft  max elevation: {:.3} ft  time: {:?}",
-                min_elevation - current_sea_level,
+                "  max elevation: {:.3} ft (initial: {:.3} ft, {:.1}%)  avg elevation: {:.3} ft (initial: {:.3} ft, {:.1}%)",
                 max_elevation - current_sea_level,
-                water_start.elapsed()
+                initial_max_elevation,
+                (max_elevation - current_sea_level) / initial_max_elevation * 100.0,
+                avg_elevation,
+                initial_avg_elevation,
+                avg_elevation / initial_avg_elevation * 100.0,
+            );
+            println!(
+                "  min elevation: {:.3} ft  time: {:?}",
+                min_elevation - current_sea_level,
+                total_elapsed,
             );
 
             let outflows = gpu_sim.download_ocean_outflows(height);
@@ -548,11 +569,15 @@ fn simulate_erosion(
             );
             // Only save CSV every 100 rounds to avoid performance issues
             if step % (1000 * log_steps) == 0 {
+                let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
                 save_simulation_state_csv(
                     &format!("terrain{tag}.csv", tag = tag),
                     hex_map,
                     seed,
                     step,
+                    initial_max_elevation,
+                    initial_avg_elevation,
+                    total_elapsed_secs,
                 );
             }
         } else {
@@ -664,7 +689,8 @@ fn simulate_erosion(
         total_sediment_out
     );
 
-    current_sea_level
+    let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
+    (current_sea_level, total_elapsed_secs)
 }
 
 fn print_elevation_and_sediment(gpu_sim: &GpuSimulation, step_label: &str) {
@@ -693,15 +719,35 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
     img.save(path).expect("Failed to save image");
 }
 
-fn save_simulation_state_csv(path: &str, hex_map: &Vec<Vec<Hex>>, seed: u32, step: u32) {
+fn save_simulation_state_csv(
+    path: &str,
+    hex_map: &Vec<Vec<Hex>>,
+    seed: u32,
+    step: u32,
+    initial_max_elevation: f32,
+    initial_avg_elevation: f32,
+    elapsed_secs: f64,
+) {
     let file = File::create(path).expect("Failed to create CSV file");
     let mut wtr = WriterBuilder::new().flexible(true).from_writer(file);
 
-    // Write mini-table for seed and step at the top
-    wtr.write_record(&["seed", "step"])
-        .expect("Failed to write metadata header");
-    wtr.write_record(&[seed.to_string(), step.to_string()])
-        .expect("Failed to write metadata values");
+    // Write mini-table for seed, step, initial elevations, and elapsed time at the top
+    wtr.write_record(&[
+        "seed",
+        "step",
+        "initial_max_elevation",
+        "initial_avg_elevation",
+        "elapsed_secs",
+    ])
+    .expect("Failed to write metadata header");
+    wtr.write_record(&[
+        seed.to_string(),
+        step.to_string(),
+        initial_max_elevation.to_bits().to_string(),
+        initial_avg_elevation.to_bits().to_string(),
+        elapsed_secs.to_bits().to_string(),
+    ])
+    .expect("Failed to write metadata values");
 
     // Blank separator row
     wtr.write_record(&[""])
@@ -750,23 +796,45 @@ fn save_simulation_state_csv(path: &str, hex_map: &Vec<Vec<Hex>>, seed: u32, ste
     wtr.flush().expect("Failed to flush CSV writer");
 }
 
-fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32) {
+fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, f64) {
     let file = File::open(path).expect("Failed to open CSV file");
     let mut rdr = ReaderBuilder::new().flexible(true).from_reader(file);
 
     let mut hex_map: Vec<Vec<Hex>> = Vec::new();
     let mut seed = 0u32;
     let mut step = 0u32;
+    let mut initial_max_elevation = 0.0f32;
+    let mut initial_avg_elevation = 0.0f32;
+    let mut elapsed_secs = 0.0f64;
     let mut row_index = 0usize;
 
     for result in rdr.records() {
         let record = result.expect("Failed to read CSV record");
         row_index += 1;
 
-        // Row 1: metadata values (seed, step) - header was consumed by Reader
+        // Row 1: metadata values (seed, step, initial elevations, elapsed_secs) - header was consumed by Reader
         if row_index == 1 {
             seed = record[0].parse().expect("Failed to parse seed");
             step = record[1].parse().expect("Failed to parse step");
+            // Handle backward compatibility - older saves may not have these fields
+            if record.len() > 2 {
+                let initial_max_bits: u32 = record[2]
+                    .parse()
+                    .expect("Failed to parse initial_max_elevation bits");
+                initial_max_elevation = f32::from_bits(initial_max_bits);
+            }
+            if record.len() > 3 {
+                let initial_avg_bits: u32 = record[3]
+                    .parse()
+                    .expect("Failed to parse initial_avg_elevation bits");
+                initial_avg_elevation = f32::from_bits(initial_avg_bits);
+            }
+            if record.len() > 4 {
+                let elapsed_bits: u64 = record[4]
+                    .parse()
+                    .expect("Failed to parse elapsed_secs bits");
+                elapsed_secs = f64::from_bits(elapsed_bits);
+            }
             continue;
         }
 
@@ -829,7 +897,14 @@ fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32) {
         };
     }
 
-    (hex_map, seed, step)
+    (
+        hex_map,
+        seed,
+        step,
+        initial_max_elevation,
+        initial_avg_elevation,
+        elapsed_secs,
+    )
 }
 
 fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) {
@@ -1043,22 +1118,36 @@ fn main() {
 
     let rounds = args.rounds;
 
-    let (mut hex_map, seed, starting_step) = if let Some(resume_path) = args.resume
-    {
-        // Resume from save file
-        println!("Resuming simulation from: {}", resume_path);
-        let (loaded_hex_map, loaded_seed, loaded_step) = load_simulation_state_csv(&resume_path);
-        println!(
-            "Loaded seed: {}, starting step: {}",
-            loaded_seed, loaded_step
-        );
+    let (mut hex_map, seed, starting_step, initial_max_elevation, initial_avg_elevation, prior_elapsed_secs) =
+        if let Some(resume_path) = args.resume {
+            // Resume from save file
+            println!("Resuming simulation from: {}", resume_path);
+            let (
+                loaded_hex_map,
+                loaded_seed,
+                loaded_step,
+                loaded_initial_max,
+                loaded_initial_avg,
+                loaded_elapsed_secs,
+            ) = load_simulation_state_csv(&resume_path);
+            println!(
+                "Loaded seed: {}, starting step: {}, initial max elevation: {:.3}, initial avg elevation: {:.3}, prior elapsed: {:.1}s",
+                loaded_seed, loaded_step, loaded_initial_max, loaded_initial_avg, loaded_elapsed_secs
+            );
 
-        let simplex = Simplex::new(loaded_seed);
-        let sea_deviation_for_river_y: i16 =
-            get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+            let simplex = Simplex::new(loaded_seed);
+            let _sea_deviation_for_river_y: i16 =
+                get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
-        (loaded_hex_map, loaded_seed, loaded_step)
-    } else {
+            (
+                loaded_hex_map,
+                loaded_seed,
+                loaded_step,
+                loaded_initial_max,
+                loaded_initial_avg,
+                loaded_elapsed_secs,
+            )
+        } else {
         // New simulation
         let seed = args
             .seed
@@ -1357,10 +1446,54 @@ fn main() {
         let_slopes_settle(&mut hex_map);
         fill_sea(&mut hex_map);
 
+        // Calculate initial max and average elevation for comparison during simulation
+        let (_, initial_max_elevation) = hex_map
+            .par_iter()
+            .map(|row| {
+                let mut row_min = f32::INFINITY;
+                let mut row_max = f32::NEG_INFINITY;
+                for h in row {
+                    if h.coordinate.0 > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                        continue;
+                    }
+                    if h.elevation < row_min {
+                        row_min = h.elevation;
+                    }
+                    if h.elevation > row_max {
+                        row_max = h.elevation;
+                    }
+                }
+                (row_min, row_max)
+            })
+            .reduce(
+                || (f32::INFINITY, f32::NEG_INFINITY),
+                |acc, val| (acc.0.min(val.0), acc.1.max(val.1)),
+            );
+
+        let (total_land, original_land_count): (f64, usize) = hex_map
+            .iter()
+            .flat_map(|row| row.iter().filter(|h| h.original_land))
+            .fold((0.0, 0), |(sum, count), h| {
+                (sum + (h.elevation - BASE_SEA_LEVEL) as f64, count + 1)
+            });
+
+        let initial_avg_elevation = if original_land_count > 0 {
+            (total_land / original_land_count as f64) as f32
+        } else {
+            0.0
+        };
+
+        // Subtract sea level to get elevation above sea level, matching how it's logged
+        let initial_max_elevation = initial_max_elevation - BASE_SEA_LEVEL;
+
         let hex_duration = hex_start.elapsed();
         println!("Hex map creation took: {:?}", hex_duration);
+        println!(
+            "Initial max elevation: {:.3} ft, initial avg elevation: {:.3} ft",
+            initial_max_elevation, initial_avg_elevation
+        );
 
-        (hex_map, seed, 0)
+        (hex_map, seed, 0, initial_max_elevation, initial_avg_elevation, 0.0)
     };
 
     println!("Seed: {}", seed);
@@ -1370,11 +1503,14 @@ fn main() {
 
     let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
     let remaining_steps = total_steps.saturating_sub(starting_step);
-    let final_sea_level = simulate_erosion(
+    let (final_sea_level, final_elapsed_secs) = simulate_erosion(
         &mut hex_map,
         remaining_steps,
         seed,
         starting_step,
+        initial_max_elevation,
+        initial_avg_elevation,
+        prior_elapsed_secs,
     );
 
     // TODO: This isn't working, should fix.
@@ -1397,7 +1533,15 @@ fn main() {
         HEIGHT_PIXELS as u32,
     );
     let final_step = starting_step + remaining_steps;
-    save_simulation_state_csv("terrain_water_final.csv", &hex_map, seed, final_step);
+    save_simulation_state_csv(
+        "terrain_water_final.csv",
+        &hex_map,
+        seed,
+        final_step,
+        initial_max_elevation,
+        initial_avg_elevation,
+        final_elapsed_secs,
+    );
 
     render_frame(&mut hex_map, &mut frame_buffer, final_sea_level, false);
     save_buffer_png(
@@ -1406,7 +1550,15 @@ fn main() {
         WIDTH_PIXELS as u32,
         HEIGHT_PIXELS as u32,
     );
-    save_simulation_state_csv("terrain_final.csv", &hex_map, seed, final_step);
+    save_simulation_state_csv(
+        "terrain_final.csv",
+        &hex_map,
+        seed,
+        final_step,
+        initial_max_elevation,
+        initial_avg_elevation,
+        final_elapsed_secs,
+    );
 
     let save_duration = png_start.elapsed();
     println!("Image rendering and saving took: {:?}", save_duration);
