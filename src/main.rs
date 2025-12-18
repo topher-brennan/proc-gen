@@ -225,6 +225,114 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
     download_hex_data(&gpu_sim, hex_map);
 }
 
+/// Calculates which hexes are "continental" based on connectivity to the eastern land boundary.
+/// Continental hexes are:
+/// 1. All hexes at x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH (the eastern boundary)
+/// 2. Any hex with elevation > sea_level adjacent to a continental hex (spreading westward)
+/// 3. Any enclosed region completely surrounded by continental hexes (inland lakes/valleys)
+///
+/// This excludes:
+/// - Islands (not connected to the continent)
+/// - The NE basin (x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH)
+/// - Coastal bays connected to the sea
+fn calculate_continental_hexes(hex_map: &Vec<Vec<Hex>>, sea_level: f32) -> Vec<Vec<bool>> {
+    let height = HEIGHT_PIXELS;
+    let width = WIDTH_HEXAGONS;
+    let continental_boundary_x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+
+    let mut continental = vec![vec![false; width]; height];
+    let mut queue = std::collections::VecDeque::new();
+
+    // Step 1: Initialize hexes at the continental boundary as continental
+    for y in 0..height {
+        continental[y][continental_boundary_x] = true;
+        queue.push_back((continental_boundary_x, y));
+    }
+
+    // Step 2: BFS to spread continental status to adjacent hexes above sea level
+    while let Some((x, y)) = queue.pop_front() {
+        let offsets = if x % 2 == 0 {
+            &NEIGH_OFFSETS_EVEN
+        } else {
+            &NEIGH_OFFSETS_ODD
+        };
+
+        for &(dx, dy) in offsets.iter() {
+            let nx = x as i16 + dx;
+            let ny = y as i16 + dy;
+
+            if nx >= 0 && nx < width as i16 && ny >= 0 && ny < height as i16 {
+                let nx = nx as usize;
+                let ny = ny as usize;
+
+                // Skip if already continental or if x > continental_boundary_x
+                if continental[ny][nx] || nx > continental_boundary_x {
+                    continue;
+                }
+
+                // Only spread to hexes above sea level
+                if hex_map[ny][nx].elevation > sea_level {
+                    continental[ny][nx] = true;
+                    queue.push_back((nx, ny));
+                }
+            }
+        }
+    }
+
+    // Step 3: Find hexes reachable from ocean edges (through non-continental hexes)
+    let mut sea_reachable = vec![vec![false; width]; height];
+
+    // Start from western edge (x=0) and southern edge (y=height-1)
+    for y in 0..height {
+        if !continental[y][0] {
+            sea_reachable[y][0] = true;
+            queue.push_back((0, y));
+        }
+    }
+    for x in 0..width {
+        if !continental[height - 1][x] && !sea_reachable[height - 1][x] {
+            sea_reachable[height - 1][x] = true;
+            queue.push_back((x, height - 1));
+        }
+    }
+
+    // BFS through non-continental hexes to find all sea-reachable areas
+    while let Some((x, y)) = queue.pop_front() {
+        let offsets = if x % 2 == 0 {
+            &NEIGH_OFFSETS_EVEN
+        } else {
+            &NEIGH_OFFSETS_ODD
+        };
+
+        for &(dx, dy) in offsets.iter() {
+            let nx = x as i16 + dx;
+            let ny = y as i16 + dy;
+
+            if nx >= 0 && nx < width as i16 && ny >= 0 && ny < height as i16 {
+                let nx = nx as usize;
+                let ny = ny as usize;
+
+                if !continental[ny][nx] && !sea_reachable[ny][nx] {
+                    sea_reachable[ny][nx] = true;
+                    queue.push_back((nx, ny));
+                }
+            }
+        }
+    }
+
+    // Step 4: Any hex not continental AND not sea-reachable is an enclosed inland area
+    // Mark these as continental (they're surrounded by continental land)
+    for y in 0..height {
+        for x in 0..width {
+            if !continental[y][x] && !sea_reachable[y][x] {
+                continental[y][x] = true;
+            }
+        }
+    }
+
+    continental
+}
+
 // TODO: Is it possible to simplify this?
 fn fill_sea(hex_map: &mut Vec<Vec<Hex>>) {
     let height = HEIGHT_PIXELS as usize;
@@ -295,6 +403,10 @@ fn simulate_erosion(
     starting_step: u32,
     initial_max_elevation: f32,
     initial_avg_elevation: f32,
+    initial_sea_avg_elevation: f32,
+    initial_north_avg: f32,
+    initial_central_avg: f32,
+    initial_south_avg: f32,
     prior_elapsed_secs: f64,
 ) -> (f32, f64) {
     let water_start = Instant::now();
@@ -311,7 +423,6 @@ fn simulate_erosion(
     let mut total_sediment_in = 0.0f32;
     let mut total_sediment_out = 0.0f32;
 
-    // TODO: Vary sea level over time.
     let mut current_sea_level = BASE_SEA_LEVEL;
 
     upload_hex_data(hex_map, &gpu_sim);
@@ -328,15 +439,12 @@ fn simulate_erosion(
         "  RAINFALL_FACTOR {}  EVAPORATION_FACTOR {}",
         RAINFALL_FACTOR, EVAPORATION_FACTOR
     );
-    println!(
-        "  RIVER_Y {}  RIVER_SOURCE_X {}",
-        RIVER_Y, RIVER_SOURCE_X
-    );
+    println!("  RIVER_Y {}  RIVER_SOURCE_X {}", RIVER_Y, RIVER_SOURCE_X);
 
     let round_size = get_round_size();
 
     // TODO: Currently dividing by 1000 to compensate for heartbeat not working, really need to fix that.
-    let log_steps = round_size as u32 * LOG_ROUNDS / 1000;
+    let log_steps = round_size as u32 * LOG_ROUNDS / 100;
 
     for step_offset in 0..steps {
         let step = starting_step + step_offset;
@@ -417,7 +525,8 @@ fn simulate_erosion(
                 .filter_map(|(y, row)| {
                     row.get(RIVER_SOURCE_X)
                         .filter(|hex| {
-                            hex.elevation > current_sea_level && hex.water_depth > LOW_WATER_THRESHOLD
+                            hex.elevation > current_sea_level
+                                && hex.water_depth > LOW_WATER_THRESHOLD
                         })
                         .map(|hex| (y, hex.water_depth))
                 })
@@ -438,38 +547,113 @@ fn simulate_erosion(
 
             let round = step / (round_size as u32);
 
-            let (min_elevation, max_elevation) = hex_map
-                .par_iter()
-                .map(|row| {
-                    let mut row_min = f32::INFINITY;
-                    let mut row_max = f32::NEG_INFINITY;
-                    for h in row {
-                        if h.coordinate.0 > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
-                            continue;
-                        }
-                        if h.elevation < row_min {
-                            row_min = h.elevation;
-                        }
-                        if h.elevation > row_max {
-                            row_max = h.elevation;
+            // Calculate continental hexes for this logging step
+            let continental = calculate_continental_hexes(hex_map, current_sea_level);
+
+            // Regional boundaries based on y coordinate
+            let central_boundary = NORTH_DESERT_HEIGHT;
+            let south_boundary = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT;
+
+            // Calculate overall and regional stats for continental hexes
+            let (
+                min_elevation,
+                max_elevation,
+                total_land,
+                continental_count,
+                north_total,
+                north_count,
+                central_total,
+                central_count_region,
+                south_total,
+                south_count,
+            ): (f32, f32, f64, usize, f64, usize, f64, usize, f64, usize) = {
+                let mut min_elev = f32::INFINITY;
+                let mut max_elev = f32::NEG_INFINITY;
+                let mut sum = 0.0f64;
+                let mut count = 0usize;
+                let mut n_sum = 0.0f64;
+                let mut n_count = 0usize;
+                let mut c_sum = 0.0f64;
+                let mut c_count = 0usize;
+                let mut s_sum = 0.0f64;
+                let mut s_count = 0usize;
+
+                for y in 0..HEIGHT_PIXELS {
+                    for x in 0..WIDTH_HEXAGONS {
+                        if continental[y][x] {
+                            let elev = hex_map[y][x].elevation;
+                            let elev_above_sea = (elev - current_sea_level) as f64;
+
+                            if elev < min_elev {
+                                min_elev = elev;
+                            }
+                            if elev > max_elev {
+                                max_elev = elev;
+                            }
+                            sum += elev_above_sea;
+                            count += 1;
+
+                            // Regional breakdown
+                            if y < central_boundary {
+                                n_sum += elev_above_sea;
+                                n_count += 1;
+                            } else if y < south_boundary {
+                                c_sum += elev_above_sea;
+                                c_count += 1;
+                            } else {
+                                s_sum += elev_above_sea;
+                                s_count += 1;
+                            }
                         }
                     }
-                    (row_min, row_max)
-                })
-                .reduce(
-                    || (f32::INFINITY, f32::NEG_INFINITY),
-                    |acc, val| (acc.0.min(val.0), acc.1.max(val.1)),
-                );
+                }
+                (
+                    min_elev, max_elev, sum, count, n_sum, n_count, c_sum, c_count, s_sum, s_count,
+                )
+            };
 
-            let (total_land, original_land_count): (f64, usize) = hex_map
-                .iter()
-                .flat_map(|row| row.iter().filter(|h| h.original_land))
-                .fold((0.0, 0), |(sum, count), h| {
-                    (sum + (h.elevation - current_sea_level) as f64, count + 1)
-                });
+            let avg_elevation = if continental_count > 0 {
+                (total_land / continental_count as f64) as f32
+            } else {
+                0.0
+            };
 
-            let avg_elevation = if original_land_count > 0 {
-                (total_land / original_land_count as f64) as f32
+            let north_avg = if north_count > 0 {
+                (north_total / north_count as f64) as f32
+            } else {
+                0.0
+            };
+            let central_avg = if central_count_region > 0 {
+                (central_total / central_count_region as f64) as f32
+            } else {
+                0.0
+            };
+            let south_avg = if south_count > 0 {
+                (south_total / south_count as f64) as f32
+            } else {
+                0.0
+            };
+
+            // Calculate sea hex average elevation
+            // Sea hexes: x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH, not continental, elevation < sea level
+            let (sea_total, sea_count): (f64, usize) = {
+                let mut sum = 0.0f64;
+                let mut count = 0usize;
+                let sea_boundary_x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+
+                for y in 0..HEIGHT_PIXELS {
+                    for x in 0..=sea_boundary_x {
+                        if !continental[y][x] && hex_map[y][x].elevation < current_sea_level {
+                            sum += hex_map[y][x].elevation as f64;
+                            count += 1;
+                        }
+                    }
+                }
+                (sum, count)
+            };
+
+            let sea_avg_elevation = if sea_count > 0 {
+                (sea_total / sea_count as f64) as f32
             } else {
                 0.0
             };
@@ -510,9 +694,10 @@ fn simulate_erosion(
                 current_sea_level, seasonal_rain_multiplier
             );
             println!(
-                "  source elevation {:.3} ft  source water depth {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
+                "  source elevation {:.3} ft  source water depth {:.3} ft  source sediment {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
                 source_hex.elevation - current_sea_level,
                 source_hex.water_depth,
+                source_hex.suspended_load,
                 outlet_hex.elevation - current_sea_level,
                 target_delta_hex.elevation - current_sea_level,
             );
@@ -530,8 +715,17 @@ fn simulate_erosion(
                 avg_elevation / initial_avg_elevation * 100.0,
             );
             println!(
-                "  min elevation: {:.3} ft  time: {:?}",
+                "  regional avg: north {:.1} ft ({:.1}%)  central {:.1} ft ({:.1}%)  south {:.1} ft ({:.1}%)",
+                north_avg, north_avg / initial_north_avg * 100.0,
+                central_avg, central_avg / initial_central_avg * 100.0,
+                south_avg, south_avg / initial_south_avg * 100.0,
+            );
+            println!(
+                "  min elevation: {:.3} ft  sea avg: {:.3} ft (initial: {:.3} ft, {:.1}%)  time: {:?}",
                 min_elevation - current_sea_level,
+                sea_avg_elevation,
+                initial_sea_avg_elevation,
+                sea_avg_elevation / initial_sea_avg_elevation * 100.0,
                 total_elapsed,
             );
 
@@ -577,12 +771,17 @@ fn simulate_erosion(
                     step,
                     initial_max_elevation,
                     initial_avg_elevation,
+                    initial_sea_avg_elevation,
+                    initial_north_avg,
+                    initial_central_avg,
+                    initial_south_avg,
                     total_elapsed_secs,
                 );
             }
-        } else {
+        } else if step % (log_steps / 10) == 0 {
             // TODO: Get the heartbeat to work.
-            gpu_sim.heartbeat();
+            // gpu_sim.heartbeat();
+            gpu_sim.download_hex_data();
         }
 
         // let tidal_adjustment: f32 = 3.0 * (2.0 * f32::PI * step as f32 / TIDE_INTERVAL_STEPS as f32).sin();
@@ -726,6 +925,10 @@ fn save_simulation_state_csv(
     step: u32,
     initial_max_elevation: f32,
     initial_avg_elevation: f32,
+    initial_sea_avg_elevation: f32,
+    initial_north_avg: f32,
+    initial_central_avg: f32,
+    initial_south_avg: f32,
     elapsed_secs: f64,
 ) {
     let file = File::create(path).expect("Failed to create CSV file");
@@ -737,6 +940,10 @@ fn save_simulation_state_csv(
         "step",
         "initial_max_elevation",
         "initial_avg_elevation",
+        "initial_sea_avg_elevation",
+        "initial_north_avg",
+        "initial_central_avg",
+        "initial_south_avg",
         "elapsed_secs",
     ])
     .expect("Failed to write metadata header");
@@ -745,6 +952,10 @@ fn save_simulation_state_csv(
         step.to_string(),
         initial_max_elevation.to_bits().to_string(),
         initial_avg_elevation.to_bits().to_string(),
+        initial_sea_avg_elevation.to_bits().to_string(),
+        initial_north_avg.to_bits().to_string(),
+        initial_central_avg.to_bits().to_string(),
+        initial_south_avg.to_bits().to_string(),
         elapsed_secs.to_bits().to_string(),
     ])
     .expect("Failed to write metadata values");
@@ -796,7 +1007,9 @@ fn save_simulation_state_csv(
     wtr.flush().expect("Failed to flush CSV writer");
 }
 
-fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, f64) {
+fn load_simulation_state_csv(
+    path: &str,
+) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, f32, f32, f32, f32, f64) {
     let file = File::open(path).expect("Failed to open CSV file");
     let mut rdr = ReaderBuilder::new().flexible(true).from_reader(file);
 
@@ -805,6 +1018,10 @@ fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, 
     let mut step = 0u32;
     let mut initial_max_elevation = 0.0f32;
     let mut initial_avg_elevation = 0.0f32;
+    let mut initial_sea_avg_elevation = 0.0f32;
+    let mut initial_north_avg = 0.0f32;
+    let mut initial_central_avg = 0.0f32;
+    let mut initial_south_avg = 0.0f32;
     let mut elapsed_secs = 0.0f64;
     let mut row_index = 0usize;
 
@@ -830,7 +1047,31 @@ fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, 
                 initial_avg_elevation = f32::from_bits(initial_avg_bits);
             }
             if record.len() > 4 {
-                let elapsed_bits: u64 = record[4]
+                let initial_sea_avg_bits: u32 = record[4]
+                    .parse()
+                    .expect("Failed to parse initial_sea_avg_elevation bits");
+                initial_sea_avg_elevation = f32::from_bits(initial_sea_avg_bits);
+            }
+            if record.len() > 5 {
+                let initial_north_bits: u32 = record[5]
+                    .parse()
+                    .expect("Failed to parse initial_north_avg bits");
+                initial_north_avg = f32::from_bits(initial_north_bits);
+            }
+            if record.len() > 6 {
+                let initial_central_bits: u32 = record[6]
+                    .parse()
+                    .expect("Failed to parse initial_central_avg bits");
+                initial_central_avg = f32::from_bits(initial_central_bits);
+            }
+            if record.len() > 7 {
+                let initial_south_bits: u32 = record[7]
+                    .parse()
+                    .expect("Failed to parse initial_south_avg bits");
+                initial_south_avg = f32::from_bits(initial_south_bits);
+            }
+            if record.len() > 8 {
+                let elapsed_bits: u64 = record[8]
                     .parse()
                     .expect("Failed to parse elapsed_secs bits");
                 elapsed_secs = f64::from_bits(elapsed_bits);
@@ -903,6 +1144,10 @@ fn load_simulation_state_csv(path: &str) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, 
         step,
         initial_max_elevation,
         initial_avg_elevation,
+        initial_sea_avg_elevation,
+        initial_north_avg,
+        initial_central_avg,
+        initial_south_avg,
         elapsed_secs,
     )
 }
@@ -949,8 +1194,10 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], sea_level: f32, sho
             let hex = &hex_map[hex_y as usize][hex_x as usize];
             let color = if show_water && hex.water_depth > LOW_WATER_THRESHOLD {
                 let r = 0u8;
-                let g = (255.0 * 0.4 * (1.0 - hex.water_depth / HIGH_WATER_THRESHOLD)).max(0.0) as u8;
-                let b = (255.0 * (0.4 + 0.6 * hex.water_depth / HIGH_WATER_THRESHOLD)).max(0.0) as u8;
+                let g =
+                    (255.0 * 0.4 * (1.0 - hex.water_depth / HIGH_WATER_THRESHOLD)).max(0.0) as u8;
+                let b =
+                    (255.0 * (0.4 + 0.6 * hex.water_depth / HIGH_WATER_THRESHOLD)).max(0.0) as u8;
                 (r as u32) << 16 | (g as u32) << 8 | (b as u32)
             } else {
                 let Rgb([r, g, b]) = elevation_to_color(hex.elevation - sea_level);
@@ -962,6 +1209,62 @@ fn render_frame(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], sea_level: f32, sho
             buffer[(y as usize) * (WIDTH_PIXELS as usize) + (x as usize)] = color;
         }
     }
+}
+
+// Renders rainfall map - uses a blue gradient where darker = more rain
+// max_rainfall is the value that maps to full intensity (expected ~95.8 * RAINFALL_FACTOR)
+fn render_rainfall(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], max_rainfall: f32) {
+    let mut actual_max: f32 = 0.0;
+    let mut actual_min: f32 = f32::MAX;
+
+    for y in 0..HEIGHT_PIXELS {
+        for x in 0..WIDTH_PIXELS {
+            let hex_x = ((x as f32) / HEX_FACTOR) as usize;
+            let hex_y = y;
+
+            let hex_x = hex_x.min(WIDTH_HEXAGONS - 1);
+            let hex_y = hex_y.min(HEIGHT_PIXELS - 1);
+
+            let hex = &hex_map[hex_y as usize][hex_x as usize];
+            let rainfall = hex.rainfall;
+
+            if rainfall > actual_max {
+                actual_max = rainfall;
+            }
+            if rainfall > 0.0 && rainfall < actual_min {
+                actual_min = rainfall;
+            }
+
+            // Normalize rainfall to 0-1 range
+            let normalized = (rainfall / max_rainfall).clamp(0.0, 1.0);
+
+            // Use a gradient from light cyan (low rain) to dark blue (high rain)
+            // For zero rainfall, use tan/beige (desert)
+            // Note: rainfall values are tiny due to RAINFALL_FACTOR, so compare against 0.0
+            let color = if rainfall == 0.0 {
+                // Desert - tan color
+                let r = 210u8;
+                let g = 180u8;
+                let b = 140u8;
+                (r as u32) << 16 | (g as u32) << 8 | (b as u32)
+            } else {
+                // Rain gradient: light cyan to dark blue
+                let r = (200.0 * (1.0 - normalized)) as u8;
+                let g = (220.0 * (1.0 - normalized * 0.7)) as u8;
+                let b = (100.0 + 155.0 * normalized) as u8;
+                (r as u32) << 16 | (g as u32) << 8 | (b as u32)
+            };
+            buffer[(y as usize) * (WIDTH_PIXELS as usize) + (x as usize)] = color;
+        }
+    }
+
+    // Divide by RAINFALL_FACTOR to show human-readable values (annual inches equivalent)
+    println!(
+        "Rainfall stats (÷RAINFALL_FACTOR): min={:.2}, max={:.2}, expected_max={:.2}",
+        actual_min / RAINFALL_FACTOR,
+        actual_max / RAINFALL_FACTOR,
+        max_rainfall / RAINFALL_FACTOR
+    );
 }
 
 fn get_erruption_elevation(target_elevation: f32) -> f32 {
@@ -1086,19 +1389,43 @@ fn get_land_deviation(simplex: &Simplex, x: f64, y: f64, period: f64) -> i16 {
         as i16
 }
 
-fn get_rainfall(rain_class: i32) -> f32 {
-    match rain_class {
-        0 => VERY_LOW_RAIN,
-        1 => LOW_RAIN,
-        2 => MEDIUM_RAIN,
-        3 => HIGH_RAIN,
-        4 => VERY_HIGH_RAIN,
-        _ => 0.0,
+// fn get_rainfall(rain_class: i32) -> f32 {
+//     match rain_class {
+//         0 => VERY_LOW_RAIN,
+//         1 => LOW_RAIN,
+//         2 => MEDIUM_RAIN,
+//         3 => HIGH_RAIN,
+//         4 => VERY_HIGH_RAIN,
+//         _ => 0.0,
+//     }
+// }
+
+fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
+    let mut result = 0.0;
+    let latitude = 25.0 + (y as f32 / 2.0 / ONE_DEGREE_LATITUDE_MILES);
+    if latitude < 29.0 {
+        result = 1.0 / (30.0 - latitude);
+    } else if latitude < 36.0 {
+        result = latitude - 28.0;
+    } else {
+        result = (latitude - 35.0).powf(2.0) + 7.0;
     }
+    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast) / (144.0 / HEX_FACTOR as f32))
+        .clamp(0.0, 1.0);
+    result *= 1.0 + factor * 2.0;
+    result
 }
 
-fn get_elevation_from_range(factor: f32, min_elevation: f32, max_elevation: f32) -> f32 {
-    (factor * (max_elevation - min_elevation) + min_elevation)
+fn pick_value_from_range(normal: f32, min: f32, max: f32) -> f32 {
+    if normal < 0.0 || normal > 1.0 {
+        println!("Normal out of range: {}", normal);
+        panic!("Normal out of range");
+    }
+    if min > max {
+        println!("Min is greater than max: {} > {}", min, max);
+        panic!("Min is greater than max");
+    }
+    (normal * (max - min) + min)
 }
 
 fn get_boundary_factor(base_factor: f32) -> f32 {
@@ -1118,36 +1445,58 @@ fn main() {
 
     let rounds = args.rounds;
 
-    let (mut hex_map, seed, starting_step, initial_max_elevation, initial_avg_elevation, prior_elapsed_secs) =
-        if let Some(resume_path) = args.resume {
-            // Resume from save file
-            println!("Resuming simulation from: {}", resume_path);
-            let (
-                loaded_hex_map,
-                loaded_seed,
-                loaded_step,
-                loaded_initial_max,
-                loaded_initial_avg,
-                loaded_elapsed_secs,
-            ) = load_simulation_state_csv(&resume_path);
-            println!(
-                "Loaded seed: {}, starting step: {}, initial max elevation: {:.3}, initial avg elevation: {:.3}, prior elapsed: {:.1}s",
-                loaded_seed, loaded_step, loaded_initial_max, loaded_initial_avg, loaded_elapsed_secs
+    let (
+        mut hex_map,
+        seed,
+        starting_step,
+        initial_max_elevation,
+        initial_avg_elevation,
+        initial_sea_avg_elevation,
+        initial_north_avg,
+        initial_central_avg,
+        initial_south_avg,
+        prior_elapsed_secs,
+    ) = if let Some(resume_path) = args.resume {
+        // Resume from save file
+        println!("Resuming simulation from: {}", resume_path);
+        let (
+            loaded_hex_map,
+            loaded_seed,
+            loaded_step,
+            loaded_initial_max,
+            loaded_initial_avg,
+            loaded_initial_sea_avg,
+            loaded_initial_north,
+            loaded_initial_central,
+            loaded_initial_south,
+            loaded_elapsed_secs,
+        ) = load_simulation_state_csv(&resume_path);
+        println!(
+                "Loaded seed: {}, starting step: {}, initial max elevation: {:.3}, initial avg elevation: {:.3}, initial sea avg: {:.3}, prior elapsed: {:.1}s",
+                loaded_seed, loaded_step, loaded_initial_max, loaded_initial_avg, loaded_initial_sea_avg, loaded_elapsed_secs
             );
+        println!(
+            "  regional initial avgs: north {:.3}, central {:.3}, south {:.3}",
+            loaded_initial_north, loaded_initial_central, loaded_initial_south
+        );
 
-            let simplex = Simplex::new(loaded_seed);
-            let _sea_deviation_for_river_y: i16 =
-                get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+        let simplex = Simplex::new(loaded_seed);
+        let _sea_deviation_for_river_y: i16 =
+            get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
-            (
-                loaded_hex_map,
-                loaded_seed,
-                loaded_step,
-                loaded_initial_max,
-                loaded_initial_avg,
-                loaded_elapsed_secs,
-            )
-        } else {
+        (
+            loaded_hex_map,
+            loaded_seed,
+            loaded_step,
+            loaded_initial_max,
+            loaded_initial_avg,
+            loaded_initial_sea_avg,
+            loaded_initial_north,
+            loaded_initial_central,
+            loaded_initial_south,
+            loaded_elapsed_secs,
+        )
+    } else {
         // New simulation
         let seed = args
             .seed
@@ -1162,9 +1511,19 @@ fn main() {
         let sea_deviation_for_river_y: i16 =
             get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
-        let x_deviation_for_outlet = sea_deviation_for_river_y + get_land_deviation(&simplex, TOTAL_SEA_WIDTH as f64, RIVER_Y as f64, DEVIATION_PERIOD);
-        let y_deviation_for_outlet =
-            get_land_deviation(&simplex, (TOTAL_SEA_WIDTH + WIDTH_HEXAGONS) as f64, RIVER_Y as f64, 96.0);
+        let x_deviation_for_outlet = sea_deviation_for_river_y
+            + get_land_deviation(
+                &simplex,
+                TOTAL_SEA_WIDTH as f64,
+                RIVER_Y as f64,
+                DEVIATION_PERIOD,
+            );
+        let y_deviation_for_outlet = get_land_deviation(
+            &simplex,
+            (TOTAL_SEA_WIDTH + WIDTH_HEXAGONS) as f64,
+            RIVER_Y as f64,
+            96.0,
+        );
 
         // Time hex map creation
         let hex_start = Instant::now();
@@ -1183,10 +1542,18 @@ fn main() {
 
             for x in 0..WIDTH_HEXAGONS {
                 let mut elevation = 0.0;
+                let mut local_max = SOUTH_MOUNTAINS_MAX_ELEVATION;
                 let mut uplift = 0.0;
-                let x_deviation = x_deviation_for_outlet - sea_deviation - get_land_deviation(&simplex, x as f64, y as f64, DEVIATION_PERIOD);
+                let x_deviation = x_deviation_for_outlet
+                    - sea_deviation
+                    - get_land_deviation(&simplex, x as f64, y as f64, DEVIATION_PERIOD);
                 let y_deviation = y_deviation_for_outlet
-                    - get_land_deviation(&simplex, (x + WIDTH_HEXAGONS) as f64, y as f64, DEVIATION_PERIOD);
+                    - get_land_deviation(
+                        &simplex,
+                        (x + WIDTH_HEXAGONS) as f64,
+                        y as f64,
+                        DEVIATION_PERIOD,
+                    );
                 let deviated_x: usize = (x as i16 + x_deviation).max(0) as usize;
                 let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
                 let distance_from_coast = deviated_x as f32 - TOTAL_SEA_WIDTH as f32;
@@ -1203,16 +1570,18 @@ fn main() {
                             / TRANSITION_PERIOD as f32)
                             .clamp(0.0, 1.0);
                         abyssal_plains_depth_adjustment += 0.1 * factor;
-                        elevation = get_elevation_from_range(
+                        local_max = ISLANDS_MAX_ELEVATION * factor;
+                        elevation = pick_value_from_range(
                             simplex_noise,
                             ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment,
-                            ISLANDS_MAX_ELEVATION * factor,
+                            local_max,
                         );
                     } else {
-                        elevation = get_elevation_from_range(
+                        local_max = 0.0;
+                        elevation = pick_value_from_range(
                             simplex_noise,
                             ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment,
-                            0.0,
+                            local_max,
                         );
                     }
                 } else {
@@ -1233,12 +1602,10 @@ fn main() {
                                 / TRANSITION_PERIOD as f32)
                                 .clamp(0.0, 1.0);
                         }
-                        factor1 = factor1.min(deviated_y as f32 / TRANSITION_PERIOD as f32);
-                        factor1 = factor1
-                            .min(
-                                (NORTH_DESERT_HEIGHT - deviated_y) as f32
-                                    / TRANSITION_PERIOD as f32,
-                            );
+                        factor1 = factor1.min(deviated_y as f32 / RIVER_Y as f32);
+                        factor1 = factor1.min(
+                            (NORTH_DESERT_HEIGHT - deviated_y) as f32 / TRANSITION_PERIOD as f32,
+                        );
                         factor1 = get_boundary_factor(factor1);
 
                         let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
@@ -1253,10 +1620,16 @@ fn main() {
                             / (TRANSITION_PERIOD as f32))
                             .min(1.0);
 
+                        let factor3 = (y as f32 / NORTH_DESERT_HEIGHT as f32).clamp(0.0, 1.0);
+
                         min_inland_elevation = BOUNDARY_ELEVATION * (1.0 - factor1) * factor2
                             + (1.0 - factor2) * OUTLET_ELEVATION
                             + factor1 * LAKE_MIN_ELEVATION;
-                        max_inland_elevation = NORTH_DESERT_MAX_ELEVATION * factor2
+                        max_inland_elevation = pick_value_from_range(
+                            factor3,
+                            FAR_NORTH_DESERT_MAX_ELEVATION,
+                            NORTH_DESERT_MAX_ELEVATION,
+                        ) * factor2
                             + (1.0 - factor2) * OUTLET_ELEVATION;
                     } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                         let factor1 = ((deviated_y - NORTH_DESERT_HEIGHT) as f32
@@ -1277,8 +1650,9 @@ fn main() {
                             as f32
                             / TRANSITION_PERIOD as f32)
                             .min(1.0);
-                        min_inland_elevation =
-                            (LAKE_MIN_ELEVATION - BOUNDARY_ELEVATION) * get_boundary_factor(factor) + BOUNDARY_ELEVATION;
+                        min_inland_elevation = (LAKE_MIN_ELEVATION - BOUNDARY_ELEVATION)
+                            * get_boundary_factor(factor)
+                            + BOUNDARY_ELEVATION;
                         max_inland_elevation = (SOUTH_MOUNTAINS_MAX_ELEVATION
                             - CENTRAL_HIGHLAND_MAX_ELEVATION)
                             * factor
@@ -1288,16 +1662,19 @@ fn main() {
                     let min_elevation =
                         ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment * coast_factor
                             + min_inland_elevation * (1.0 - coast_factor);
-                    let max_elevation = max_inland_elevation * (1.0 - coast_factor);
+                    local_max = max_inland_elevation * (1.0 - coast_factor);
 
-                    elevation =
-                        get_elevation_from_range(simplex_noise, min_elevation, max_elevation);
+                    elevation = pick_value_from_range(simplex_noise, min_elevation, local_max);
 
                     // Un-comment this code to see boundaries between regions.
                     // if deviated_y == NORTH_DESERT_HEIGHT || deviated_y == NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                     //     elevation += HEX_SIZE;
                     // }
                 }
+
+                // if elevation < 0.0 {
+                //     elevation *= get_simplex_noise_for_hex(&simplex, x as f64, (y + HEIGHT_PIXELS * 3) as f64, TOTAL_SEA_WIDTH as f64);
+                // }
 
                 // Mostly to prevent very steep coastal cliffs
                 // This produces a cut whose downward slope is 2 * MOUNTAINS_MAX_ELEVATION / COAST_WIDTH
@@ -1339,10 +1716,17 @@ fn main() {
                 }
 
                 let mut rainfall = 0.0;
+                if x < TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                    rainfall = get_rainfall(y, distance_from_coast);
+                } else if y < NE_BASIN_HEIGHT {
+                    rainfall = NE_BASIN_RAIN;
+                }
 
                 if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE {
                     if y <= NE_BASIN_HEIGHT {
-                        rainfall = VERY_HIGH_RAIN;
+                        // if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                        //     rainfall = VERY_HIGH_RAIN;
+                        // }
                         if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH + NE_BASIN_FRINGE {
                             // TODO: I don't remember why this is 1.01, probably refactoring would make it clearer.
                             elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
@@ -1351,8 +1735,7 @@ fn main() {
                         elevation = NORTH_DESERT_MAX_ELEVATION * 1.02;
                     } else {
                         let no_increments: f32 =
-                            ((SOUTH_MOUNTAINS_MAX_ELEVATION - LAKE_MIN_ELEVATION) / 1000.0).ceil()
-                                + 1.0;
+                            ((SOUTH_MOUNTAINS_MAX_ELEVATION) / 1000.0).ceil() + 1.0;
                         let boundary = NE_BASIN_HEIGHT + NE_BASIN_FRINGE;
                         let range_size = HEIGHT_PIXELS - boundary;
                         let factor = (1.0
@@ -1360,34 +1743,31 @@ fn main() {
                                 .floor()
                                 / no_increments)
                             .clamp(0.0, 1.0);
-                        elevation = get_elevation_from_range(
-                            factor,
-                            LAKE_MIN_ELEVATION,
-                            SOUTH_MOUNTAINS_MAX_ELEVATION,
-                        );
+                        elevation =
+                            pick_value_from_range(factor, 0.0, SOUTH_MOUNTAINS_MAX_ELEVATION);
                     }
-                } else {
-                    let mut rain_class = 0;
-                    if deviated_y > NORTH_DESERT_HEIGHT {
-                        rain_class += 1;
-                    }
-                    if deviated_y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                        rain_class += 1;
-                    }
+                } /* else {
+                      let mut rain_class = 0;
+                      if deviated_y > NORTH_DESERT_HEIGHT {
+                          rain_class += 1;
+                      }
+                      if deviated_y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
+                          rain_class += 1;
+                      }
 
-                    if (distance_from_coast as usize) < COAST_WIDTH - COAST_FRINGE {
-                        rainfall = get_rainfall(rain_class + 1);
-                    } else if (distance_from_coast as usize) > COAST_WIDTH + COAST_FRINGE {
-                        rainfall = get_rainfall(rain_class);
-                    } else {
-                        let factor = (distance_from_coast as usize + COAST_FRINGE - COAST_WIDTH)
-                            as f32
-                            / COAST_FRINGE as f32
-                            / 2.0;
-                        rainfall = get_rainfall(rain_class) * factor
-                            + get_rainfall(rain_class + 1) * (1.0 - factor);
-                    }
-                }
+                      if (distance_from_coast as usize) < COAST_WIDTH - COAST_FRINGE {
+                          rainfall = get_rainfall(rain_class + 1);
+                      } else if (distance_from_coast as usize) > COAST_WIDTH + COAST_FRINGE {
+                          rainfall = get_rainfall(rain_class);
+                      } else {
+                          let factor = (distance_from_coast as usize + COAST_FRINGE - COAST_WIDTH)
+                              as f32
+                              / COAST_FRINGE as f32
+                              / 2.0;
+                          rainfall = get_rainfall(rain_class) * factor
+                              + get_rainfall(rain_class + 1) * (1.0 - factor);
+                      }
+                  } */
 
                 // As above, ignore y-deviation.
                 if distance_from_river_y == 0 {
@@ -1395,7 +1775,10 @@ fn main() {
                 }
 
                 if elevation > 0.0 && rainfall > 0.0 {
-                    uplift = MAX_UPLIFT * elevation / SOUTH_MOUNTAINS_MAX_ELEVATION;
+                    // TODO: Two things we want to compensate for here: sea level rise and erosion due to rainfall.
+                    // Going to test just doing the first thing, see how much I need for second thing.
+                    // uplift = MAX_UPLIFT * elevation / SOUTH_MOUNTAINS_MAX_ELEVATION;
+                    uplift = 0.02 * YEARS_PER_STEP * elevation / local_max;
                 }
 
                 if uplift.is_nan() {
@@ -1435,7 +1818,7 @@ fn main() {
                             &simplex,
                             (x + WIDTH_HEXAGONS * 3) as f64,
                             (y + HEIGHT_PIXELS * 2) as f64,
-                            20.0,
+                            29.0,
                         ) * 0.05,
                     uplift,
                     original_land: elevation > BASE_SEA_LEVEL,
@@ -1447,53 +1830,165 @@ fn main() {
         fill_sea(&mut hex_map);
 
         // Calculate initial max and average elevation for comparison during simulation
-        let (_, initial_max_elevation) = hex_map
-            .par_iter()
-            .map(|row| {
-                let mut row_min = f32::INFINITY;
-                let mut row_max = f32::NEG_INFINITY;
-                for h in row {
-                    if h.coordinate.0 > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
-                        continue;
-                    }
-                    if h.elevation < row_min {
-                        row_min = h.elevation;
-                    }
-                    if h.elevation > row_max {
-                        row_max = h.elevation;
+        // Using the continental hex definition for consistency with logging
+        let continental = calculate_continental_hexes(&hex_map, BASE_SEA_LEVEL);
+
+        // Regional boundaries based on y coordinate
+        let central_boundary = NORTH_DESERT_HEIGHT;
+        let south_boundary = NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT;
+
+        let (
+            initial_max_elevation,
+            total_land,
+            continental_count,
+            north_total,
+            north_count,
+            central_total,
+            central_count_region,
+            south_total,
+            south_count,
+        ): (f32, f64, usize, f64, usize, f64, usize, f64, usize) = {
+            let mut max_elev = f32::NEG_INFINITY;
+            let mut sum = 0.0f64;
+            let mut count = 0usize;
+            let mut n_sum = 0.0f64;
+            let mut n_count = 0usize;
+            let mut c_sum = 0.0f64;
+            let mut c_count = 0usize;
+            let mut s_sum = 0.0f64;
+            let mut s_count = 0usize;
+
+            for y in 0..HEIGHT_PIXELS {
+                for x in 0..WIDTH_HEXAGONS {
+                    if continental[y][x] {
+                        let elev = hex_map[y][x].elevation;
+                        let elev_above_sea = (elev - BASE_SEA_LEVEL) as f64;
+
+                        if elev > max_elev {
+                            max_elev = elev;
+                        }
+                        sum += elev_above_sea;
+                        count += 1;
+
+                        // Regional breakdown
+                        if y < central_boundary {
+                            n_sum += elev_above_sea;
+                            n_count += 1;
+                        } else if y < south_boundary {
+                            c_sum += elev_above_sea;
+                            c_count += 1;
+                        } else {
+                            s_sum += elev_above_sea;
+                            s_count += 1;
+                        }
                     }
                 }
-                (row_min, row_max)
-            })
-            .reduce(
-                || (f32::INFINITY, f32::NEG_INFINITY),
-                |acc, val| (acc.0.min(val.0), acc.1.max(val.1)),
-            );
+            }
+            // Subtract sea level from max to get elevation above sea level
+            (
+                max_elev - BASE_SEA_LEVEL,
+                sum,
+                count,
+                n_sum,
+                n_count,
+                c_sum,
+                c_count,
+                s_sum,
+                s_count,
+            )
+        };
 
-        let (total_land, original_land_count): (f64, usize) = hex_map
-            .iter()
-            .flat_map(|row| row.iter().filter(|h| h.original_land))
-            .fold((0.0, 0), |(sum, count), h| {
-                (sum + (h.elevation - BASE_SEA_LEVEL) as f64, count + 1)
-            });
-
-        let initial_avg_elevation = if original_land_count > 0 {
-            (total_land / original_land_count as f64) as f32
+        let initial_avg_elevation = if continental_count > 0 {
+            (total_land / continental_count as f64) as f32
         } else {
             0.0
         };
 
-        // Subtract sea level to get elevation above sea level, matching how it's logged
-        let initial_max_elevation = initial_max_elevation - BASE_SEA_LEVEL;
+        let initial_north_avg = if north_count > 0 {
+            (north_total / north_count as f64) as f32
+        } else {
+            0.0
+        };
+        let initial_central_avg = if central_count_region > 0 {
+            (central_total / central_count_region as f64) as f32
+        } else {
+            0.0
+        };
+        let initial_south_avg = if south_count > 0 {
+            (south_total / south_count as f64) as f32
+        } else {
+            0.0
+        };
+
+        // Calculate initial sea hex average elevation
+        // Sea hexes: x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH, not continental, elevation < sea level
+        let (sea_total, sea_count): (f64, usize) = {
+            let mut sum = 0.0f64;
+            let mut count = 0usize;
+            let sea_boundary_x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+
+            for y in 0..HEIGHT_PIXELS {
+                for x in 0..=sea_boundary_x {
+                    if !continental[y][x] && hex_map[y][x].elevation < BASE_SEA_LEVEL {
+                        sum += hex_map[y][x].elevation as f64;
+                        count += 1;
+                    }
+                }
+            }
+            (sum, count)
+        };
+
+        let initial_sea_avg_elevation = if sea_count > 0 {
+            (sea_total / sea_count as f64) as f32
+        } else {
+            0.0
+        };
 
         let hex_duration = hex_start.elapsed();
         println!("Hex map creation took: {:?}", hex_duration);
         println!(
-            "Initial max elevation: {:.3} ft, initial avg elevation: {:.3} ft",
-            initial_max_elevation, initial_avg_elevation
+            "Initial max elevation: {:.3} ft, initial avg elevation: {:.3} ft, initial sea avg elevation: {:.3} ft",
+            initial_max_elevation, initial_avg_elevation, initial_sea_avg_elevation
+        );
+        println!(
+            "  regional initial avgs: north {:.3}, central {:.3}, south {:.3}",
+            initial_north_avg, initial_central_avg, initial_south_avg
         );
 
-        (hex_map, seed, 0, initial_max_elevation, initial_avg_elevation, 0.0)
+        // Generate initial terrain and rainfall PNGs
+        let mut init_frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
+        render_frame(&hex_map, &mut init_frame_buffer, BASE_SEA_LEVEL, false);
+        save_buffer_png(
+            "terrain_initial.png",
+            &init_frame_buffer,
+            WIDTH_PIXELS as u32,
+            HEIGHT_PIXELS as u32,
+        );
+        println!("Saved terrain_initial.png");
+
+        // Rainfall map - max expected is ~95.8 * RAINFALL_FACTOR
+        let max_expected_rainfall = 95.8 * RAINFALL_FACTOR;
+        render_rainfall(&hex_map, &mut init_frame_buffer, max_expected_rainfall);
+        save_buffer_png(
+            "rainfall.png",
+            &init_frame_buffer,
+            WIDTH_PIXELS as u32,
+            HEIGHT_PIXELS as u32,
+        );
+        println!("Saved rainfall.png");
+
+        (
+            hex_map,
+            seed,
+            0,
+            initial_max_elevation,
+            initial_avg_elevation,
+            initial_sea_avg_elevation,
+            initial_north_avg,
+            initial_central_avg,
+            initial_south_avg,
+            0.0,
+        )
     };
 
     println!("Seed: {}", seed);
@@ -1510,6 +2005,10 @@ fn main() {
         starting_step,
         initial_max_elevation,
         initial_avg_elevation,
+        initial_sea_avg_elevation,
+        initial_north_avg,
+        initial_central_avg,
+        initial_south_avg,
         prior_elapsed_secs,
     );
 
@@ -1540,6 +2039,10 @@ fn main() {
         final_step,
         initial_max_elevation,
         initial_avg_elevation,
+        initial_sea_avg_elevation,
+        initial_north_avg,
+        initial_central_avg,
+        initial_south_avg,
         final_elapsed_secs,
     );
 
@@ -1557,6 +2060,10 @@ fn main() {
         final_step,
         initial_max_elevation,
         initial_avg_elevation,
+        initial_sea_avg_elevation,
+        initial_north_avg,
+        initial_central_avg,
+        initial_south_avg,
         final_elapsed_secs,
     );
 

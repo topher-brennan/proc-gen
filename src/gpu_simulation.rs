@@ -613,10 +613,10 @@ impl GpuSimulation {
         let eros_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("erosion BGL"),
             entries: &[
-                buf_rw!(0, false),   // hex_data
-                buf_rw!(1, true),    // min_elev (read)
-                buf_rw!(2, false),   // erosion log buffer
-                uniform_entry!(3),   // RuntimeParams (sea_level) - shared with ocean_boundary
+                buf_rw!(0, false), // hex_data
+                buf_rw!(1, true),  // min_elev (read)
+                buf_rw!(2, false), // erosion log buffer
+                uniform_entry!(3), // RuntimeParams (sea_level) - shared with ocean_boundary
             ],
         });
         let eros_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

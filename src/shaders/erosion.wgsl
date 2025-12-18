@@ -44,14 +44,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[index]), 0.0);
-    let capacity = KC * min(cell.water_depth, min(height_diff, HEX_SIZE));
+    let capacity = KC * min(total_water_depth(cell), min(height_diff, HEX_SIZE));
 
     if (cell.suspended_load < capacity) {
         // erode
         let amount = KE * (capacity - cell.suspended_load) * cell.erosion_multiplier;
 
         residual -= amount;
-        let adj = trunc(residual * 512.0) / 512.0;
+        let adj = trunc(residual * 1024.0) / 1024.0;
         cell.elevation += adj;
         residual -= adj;
 

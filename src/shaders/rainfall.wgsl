@@ -29,7 +29,8 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (index >= hex_count) {
         return;
     }
-    let cell = hex_data[index];
+    var cell = hex_data[index];
+    var water_residual = cell.water_depth_residual;
     
     // Note to self: stop toying with removing evaporation, it's important to avoid weirdness
     // when a big lake empties.
@@ -38,9 +39,15 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Once a body of water reaches 10' deep, let it fill until it overflows,
         // creating a connection to the sea. But don't evaporate once already below
         // sea level.
-        let effective_depth = min(min(cell.water_depth, 10.0), max(height(cell), 0.0));
-        hex_data[index].water_depth -= EVAPORATION_FACTOR * effective_depth;
-        hex_data[index].water_depth = max(hex_data[index].water_depth, 0.0);
+        let effective_depth = clamp(total_water_depth(cell), 0.0, 10.0);
+        water_residual -= EVAPORATION_FACTOR * effective_depth;
     }
-    hex_data[index].water_depth += cell.rainfall * params.seasonal_rain_multiplier;
+
+    // Add rainfall to residual
+    water_residual += cell.rainfall * params.seasonal_rain_multiplier;
+
+    // Truncate to 1/1024 precision and apply
+    let adj = trunc(water_residual * 1024.0) / 1024.0;
+    hex_data[index].water_depth = cell.water_depth + adj;
+    hex_data[index].water_depth_residual = water_residual - adj;
 } 

@@ -20,9 +20,10 @@ pub const MEDIUM_RAIN: f32 = 21.0;
 // Used for coastal south mountains.
 pub const HIGH_RAIN: f32 = 34.0;
 // Used for NE basin.
-pub const VERY_HIGH_RAIN: f32 = 49.0;
+pub const VERY_HIGH_RAIN: f32 = 53.0;
+pub const NE_BASIN_RAIN: f32 = 30.0;
 pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 24.0 * 6.0;
+pub const STEPS_PER_DAY: f32 = 24.0 * 60.0;
 pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
@@ -30,7 +31,7 @@ pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
 // Or maybe 2.4 and a threshold of 10 feet?
 pub const EVAPORATION_FACTOR: f32 = YEARS_PER_STEP * 0.2;
 
-pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.05817;
+pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.0;
 pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
 pub const DEVIATION_PERIOD: f64 = 96.0;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
@@ -62,38 +63,37 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN
     * CENTRAL_HIGHLAND_HEIGHT as f32;
 // An attempt to balance water in north and central regions mathematically.
 // TODO: Maybe fix at 140?
-pub const NE_BASIN_WIDTH: usize = ((MAIN_CENTRAL_HIGHLAND_RAIN - NORTH_DESERT_RAIN)
-    / (VERY_HIGH_RAIN * NE_BASIN_HEIGHT as f32)) as usize;
+pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
-pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -17_000.0;
-pub const LAKE_MIN_ELEVATION: f32 = -2000.0;
+pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -17_100.0;
+pub const LAKE_MIN_ELEVATION: f32 = -2_400.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
 pub const RIVER_SOURCE_X: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE + 1;
 pub const SEA_LEVEL: f32 = 0.0;
+pub const BASE_SEA_LEVEL: f32 = SEA_LEVEL;
 // TODO: Do we still need this? Maybe for rainfall logic.
 // Could maybe replace this with a maximum depth of surface currents of 330 feet.
 pub const CONTINENTAL_SHELF_DEPTH: f32 = 1000.0;
 
-// With Perlin noise, actual elevation will likely be lower than these numbers.
-pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_000.0;
-pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 11_000.0;
-pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 17_000.0;
-pub const ISLANDS_MAX_ELEVATION: f32 = 12_000.0;
-pub const OUTLET_ELEVATION: f32 = 600.0;
+pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_700.0;
+pub const FAR_NORTH_DESERT_MAX_ELEVATION: f32 = 3_300.0;
+pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 10_100.0;
+pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 16_900.0;
+pub const ISLANDS_MAX_ELEVATION: f32 = 11_200.0;
+pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
 pub const NE_BASIN_MIN_ELEVATION: f32 = 600.0;
-
 
 pub const KC: f32 = 3.0; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // Experimentally, a KD of 0.01 results in even filling of large lakes.
                                // Too high a value may result in water sloshing back and forth drilling
                                // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = YEARS_PER_STEP * 4.0; // deposition rate fraction
-// Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
+pub const KD: f32 = 1.0 / STEPS_PER_DAY; // deposition rate fraction
+                                         // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
 pub const MAX_UPLIFT: f32 = YEARS_PER_STEP * KC * KE * 2.5; // Feet per step
 
 pub const FLOW_FACTOR: f32 = 0.9;
@@ -106,7 +106,7 @@ pub const DEFAULT_ROUNDS: u32 = 4_800;
 // might work as a compromise (and show where relatively shallow-draft boats can
 // move freely, even if ones with deeper draft couldn't).
 pub const LOW_WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
-pub const HIGH_WATER_THRESHOLD: f32 = 7.0; // Feet
+pub const HIGH_WATER_THRESHOLD: f32 = 6.0; // Feet
 
 pub const MAX_SLOPE: f32 = 1.0;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
