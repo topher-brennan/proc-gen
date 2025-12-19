@@ -1410,6 +1410,9 @@ fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
     } else {
         result = (latitude - 35.0).powf(2.0) + 7.0;
     }
+
+    result = result.clamp(0.0, 20.0);
+
     let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast) / (144.0 / HEX_FACTOR as f32))
         .clamp(0.0, 1.0);
     result *= 1.0 + factor * 2.0;
@@ -1733,7 +1736,7 @@ fn main() {
                         }
                     } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                         elevation = NORTH_DESERT_MAX_ELEVATION * 1.02;
-                    } else {
+                    } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
                         let no_increments: f32 =
                             ((SOUTH_MOUNTAINS_MAX_ELEVATION) / 1000.0).ceil() + 1.0;
                         let boundary = NE_BASIN_HEIGHT + NE_BASIN_FRINGE;
@@ -1967,15 +1970,15 @@ fn main() {
         println!("Saved terrain_initial.png");
 
         // Rainfall map - max expected is ~95.8 * RAINFALL_FACTOR
-        let max_expected_rainfall = 95.8 * RAINFALL_FACTOR;
-        render_rainfall(&hex_map, &mut init_frame_buffer, max_expected_rainfall);
-        save_buffer_png(
-            "rainfall.png",
-            &init_frame_buffer,
-            WIDTH_PIXELS as u32,
-            HEIGHT_PIXELS as u32,
-        );
-        println!("Saved rainfall.png");
+        // let max_expected_rainfall = 95.8 * RAINFALL_FACTOR;
+        // render_rainfall(&hex_map, &mut init_frame_buffer, max_expected_rainfall);
+        // save_buffer_png(
+        //     "rainfall.png",
+        //     &init_frame_buffer,
+        //     WIDTH_PIXELS as u32,
+        //     HEIGHT_PIXELS as u32,
+        // );
+        // println!("Saved rainfall.png");
 
         (
             hex_map,

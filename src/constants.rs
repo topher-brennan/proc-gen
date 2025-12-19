@@ -87,13 +87,13 @@ pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
 pub const NE_BASIN_MIN_ELEVATION: f32 = 600.0;
 
-pub const KC: f32 = 3.0; // capacity coefficient
+pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // Experimentally, a KD of 0.01 results in even filling of large lakes.
                                // Too high a value may result in water sloshing back and forth drilling
                                // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 1.0 / STEPS_PER_DAY; // deposition rate fraction
-                                         // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
+pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
+                               // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
 pub const MAX_UPLIFT: f32 = YEARS_PER_STEP * KC * KE * 2.5; // Feet per step
 
 pub const FLOW_FACTOR: f32 = 0.9;
