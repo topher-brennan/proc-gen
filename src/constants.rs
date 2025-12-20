@@ -66,8 +66,8 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN
 pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
-pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -17_100.0;
-pub const LAKE_MIN_ELEVATION: f32 = 0.0;
+pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_300.0;
+pub const LAKE_MIN_ELEVATION: f32 = -1_900.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
@@ -81,7 +81,7 @@ pub const CONTINENTAL_SHELF_DEPTH: f32 = 1000.0;
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_700.0;
 pub const FAR_NORTH_DESERT_MAX_ELEVATION: f32 = 3_300.0;
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 10_100.0;
-pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 16_900.0;
+pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 15_900.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 11_200.0;
 pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
@@ -93,8 +93,10 @@ pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // Too high a value may result in water sloshing back and forth drilling
                                // pits in lakes, not sure where the limit is though.
 pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
-                               // Highest peaks lose about 1 ft. per 30 rounds, should raise these a bit to compensate.
-pub const MAX_UPLIFT: f32 = YEARS_PER_STEP * KC * KE * 2.5; // Feet per step
+
+// In one test, the highest peak was observed to lose 50.3 feet over 58 rounds.
+// This tries to compensate for this.
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 288.1 * RAINFALL_FACTOR * KC * KE; // Feet per step
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.

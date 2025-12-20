@@ -1777,11 +1777,11 @@ fn main() {
                     elevation = elevation.min(NORTH_DESERT_MAX_ELEVATION * 1.01);
                 }
 
-                if elevation > 0.0 && rainfall > 0.0 {
+                if elevation > 0.0 {
                     // TODO: Two things we want to compensate for here: sea level rise and erosion due to rainfall.
                     // Going to test just doing the first thing, see how much I need for second thing.
                     // uplift = MAX_UPLIFT * elevation / SOUTH_MOUNTAINS_MAX_ELEVATION;
-                    uplift = 0.02 * YEARS_PER_STEP * elevation / local_max;
+                    uplift = (0.02 * YEARS_PER_STEP + RAIN_BASED_UPLIFT_FACTOR * rainfall) * elevation / local_max;
                 }
 
                 if uplift.is_nan() {
