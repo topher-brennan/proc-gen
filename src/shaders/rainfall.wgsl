@@ -46,8 +46,11 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Add rainfall to residual
     water_residual += cell.rainfall * params.seasonal_rain_multiplier;
 
-    // Truncate to 1/1024 precision and apply
-    let adj = trunc(water_residual * 1024.0) / 1024.0;
-    hex_data[index].water_depth = cell.water_depth + adj;
-    hex_data[index].water_depth_residual = water_residual - adj;
+    // Floor to 1/512 precision and apply
+    //
+    // If water_residual is negative, adj will be more negative, except maybe in case
+    // of a rounding error, which the max() will prevent.
+    let adj = floor(water_residual * 512.0) / 512.0;
+    hex_data[index].water_depth = max(cell.water_depth + adj, 0.0);
+    hex_data[index].water_depth_residual = max(water_residual - adj, 0.0);
 } 
