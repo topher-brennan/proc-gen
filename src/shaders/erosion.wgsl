@@ -51,7 +51,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let amount = KE * (capacity - cell.suspended_load) * cell.erosion_multiplier;
 
         residual -= amount;
-        let adj = trunc(residual * 1024.0) / 1024.0;
+        let adj = trunc(residual * 512.0) / 512.0;
         cell.elevation += adj;
         residual -= adj;
 
@@ -66,7 +66,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         residual += amount;
-        let adj = trunc(residual * 1024.0) / 1024.0;
+        let adj = trunc(residual * 512.0) / 512.0;
         cell.elevation += adj;
         residual -= adj;
 
