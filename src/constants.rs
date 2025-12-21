@@ -30,6 +30,7 @@ pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
 // Some dubiously realistic back-of-the-envelope math suggested maybe I should use 4/3 and a threshold of 18 feet.
 // Or maybe 2.4 and a threshold of 10 feet?
 pub const EVAPORATION_FACTOR: f32 = YEARS_PER_STEP * 0.2;
+pub const MAX_EVAPORATION_PER_STEP: f32 = 2.0 * YEARS_PER_STEP;
 
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.0;
 pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
