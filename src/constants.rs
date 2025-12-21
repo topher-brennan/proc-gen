@@ -68,7 +68,7 @@ pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
 pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_300.0;
-pub const LAKE_MIN_ELEVATION: f32 = -1_900.0;
+pub const LAKE_MIN_ELEVATION: f32 = 0.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
@@ -97,7 +97,7 @@ pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
 
 // In one test, the highest peak was observed to lose 50.3 feet over 58 rounds.
 // This tries to compensate for this.
-pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 288.1 * RAINFALL_FACTOR * KC * KE; // Feet per step
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 300.0 * RAINFALL_FACTOR * KC * KE; // Feet per step
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.

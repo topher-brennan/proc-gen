@@ -216,9 +216,20 @@ impl GpuSimulation {
                         },
                         count: None,
                     },
-                    // Uniform buffer with constants
+                    // min_elev buffer (read-only)
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Uniform buffer with constants
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -458,6 +469,14 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
+        // ---- min_elev_buffer (created early for rainfall bind group) ----
+        let min_elev_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("min_elev"),
+            size: 4, // resized later
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let next_water_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Next Water Buffer"),
             size: 4,
@@ -501,6 +520,10 @@ impl GpuSimulation {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
+                    resource: min_elev_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
                     resource: rain_params_buffer.as_entire_binding(),
                 },
             ],
@@ -552,14 +575,6 @@ impl GpuSimulation {
                     resource: next_load_buffer.as_entire_binding(),
                 },
             ],
-        });
-
-        // ---- min_elev_buffer ----
-        let min_elev_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("min_elev"),
-            size: 4, // resized later
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
         });
 
         // ---- min_neigh pipeline ----
@@ -885,21 +900,7 @@ impl GpuSimulation {
             }],
         });
 
-        // Recreate rainfall bind group with new hex buffer
-        self.rainfall_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Rainfall Bind Group"),
-            layout: &self.rainfall_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.hex_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.rain_params_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        // Note: rainfall_bind_group is recreated in resize_min_buffers()
 
         // Resize next_water / next_load buffers
         let buf_bytes = (width * height * std::mem::size_of::<f32>()) as u64;
@@ -1102,6 +1103,26 @@ impl GpuSimulation {
                 bg_entry!(1, &self.min_elev_buffer),
                 bg_entry!(2, &self.erosion_log_buffer),
                 bg_entry!(3, &self.ocean_params_buffer),
+            ],
+        });
+
+        // Recreate rainfall bind group with resized min_elev_buffer
+        self.rainfall_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Rainfall Bind Group"),
+            layout: &self.rainfall_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.hex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.min_elev_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.rain_params_buffer.as_entire_binding(),
+                },
             ],
         });
     }

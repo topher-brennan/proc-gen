@@ -141,18 +141,13 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (move_f > 0.0) {
             let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
             let load_outflow = sediment_fraction(hex) * move_f;
-            var water_outflow_with_evaporation = water_outflow;
-            if (index % u32(WIDTH) <= u32(BASIN_X_BOUNDARY)) {
-                water_outflow_with_evaporation = max(water_outflow_with_evaporation, MAX_EVAPORATION_PER_STEP);
-                water_outflow_with_evaporation = min(water_outflow_with_evaporation, total_water_depth(hex));
-            }
 
             // Subtract outflow from our own next buffers (atomic for thread safety)
             // We use compareExchange loop because atomicAdd only works on integers
             var old_bits = atomicLoad(&next_water[index]);
             loop {
                 let old_f32 = bitcast<f32>(old_bits);
-                let new_f32 = old_f32 - water_outflow_with_evaporation;
+                let new_f32 = old_f32 - water_outflow;
                 let new_bits = bitcast<i32>(new_f32);
                 let result = atomicCompareExchangeWeak(&next_water[index], old_bits, new_bits);
                 if (result.exchanged) { break; }

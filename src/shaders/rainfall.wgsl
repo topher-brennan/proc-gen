@@ -18,8 +18,9 @@ struct RuntimeParams {
 
 @group(0) @binding(0)
 var<storage, read_write> hex_data: array<Hex>;
-
 @group(0) @binding(1)
+var<storage, read> min_elev: array<f32>;   // output from min_neigh pass
+@group(0) @binding(2)
 var<uniform> params: RuntimeParams;
 
 @compute @workgroup_size(256)
@@ -36,14 +37,19 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // when a big lake empties.
     // Don't evaporate in basins at edge of map.
     if (index % u32(WIDTH) <= u32(BASIN_X_BOUNDARY)) {
-        // Once a body of water reaches 10' deep, let it fill until it overflows,
-        // creating a connection to the sea. But don't evaporate once already below
-        // sea level.
-        let effective_depth = clamp(total_water_depth(cell), 0.0, 10.0);
-        water_residual -= EVAPORATION_FACTOR * effective_depth;
+        // Realistically, evaporation should be proportional to the percentage of a hex
+        // covered in water, but we don't actually track that. So we do a crude estimate
+        // based on min_neigh and total water in the hex.
+        let height_diff = max((height(cell) - min_elev[index]), 0.0);
+        var covered = 1.0;
+        if (height_diff > 0.0) {
+            covered = min(total_water_depth(cell) / height_diff, 1.0);
+        }
+        water_residual -= MAX_EVAPORATION_PER_STEP * covered;
     }
 
     // Add rainfall to residual
+    // TODO: Reverse seasonal rain in western basins.
     water_residual += cell.rainfall * params.seasonal_rain_multiplier;
 
     // Floor to 1/512 precision and apply

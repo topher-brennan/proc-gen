@@ -694,12 +694,20 @@ fn simulate_erosion(
                 current_sea_level, seasonal_rain_multiplier
             );
             println!(
-                "  source elevation {:.3} ft  source water depth {:.3} ft  source sediment {:.3} ft  outlet elevation {:.3} ft  target delta elevation {:.3} ft",
+                "  source elevation {:.3} ft  source water depth {:.3} ft  source sediment {:.3} ft",
                 source_hex.elevation - current_sea_level,
                 source_hex.water_depth,
                 source_hex.suspended_load,
+            );
+            println!("  outlet elevation {:.3} ft  outlet water depth {:.3} ft  outlet sediment {:.3} ft",
                 outlet_hex.elevation - current_sea_level,
+                outlet_hex.water_depth,
+                outlet_hex.suspended_load,
+            );
+            println!("  target delta elevation {:.3} ft  target delta water depth {:.3} ft  target delta sediment {:.3} ft",
                 target_delta_hex.elevation - current_sea_level,
+                target_delta_hex.water_depth,
+                target_delta_hex.suspended_load,
             );
             println!(
                 "  total land (original): {:.3} ft  net land: {:.3} ft  total sediment: {:.3} ft",
@@ -1619,7 +1627,7 @@ fn main() {
                         // Area is oval-shaped, not circular, with the longer axis running east-west.
                         // I keep fiddling with the ratio of the longer axis to the shorter axis, for awhile I'd settled on 2:1 but
                         // seem to be having trouble making up my mind.
-                        let mut factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2)
+                        let mut factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / (800.0 / TRANSITION_PERIOD as f32), cy2)
                             / (TRANSITION_PERIOD as f32))
                             .min(1.0);
 
