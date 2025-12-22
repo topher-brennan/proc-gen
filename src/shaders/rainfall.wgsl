@@ -31,7 +31,8 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     var cell = hex_data[index];
-    var water_residual = cell.water_depth_residual;
+    // var water_residual = cell.water_depth_residual;
+    var water = cell.water_depth;
     
     // Note to self: stop toying with removing evaporation, it's important to avoid weirdness
     // when a big lake empties.
@@ -45,18 +46,22 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (height_diff > 0.0) {
             covered = min(total_water_depth(cell) / height_diff, 1.0);
         }
-        water_residual -= MAX_EVAPORATION_PER_STEP * covered;
+        // water_residual -= MAX_EVAPORATION_PER_STEP * covered;
+        water -= MAX_EVAPORATION_PER_STEP * covered;
+        water = max(water, 0.0);
     }
 
     // Add rainfall to residual
     // TODO: Reverse seasonal rain in western basins.
-    water_residual += cell.rainfall * params.seasonal_rain_multiplier;
+    // water_residual += cell.rainfall * params.seasonal_rain_multiplier;
+    water += cell.rainfall * params.seasonal_rain_multiplier;
 
     // Floor to 1/512 precision and apply
     //
     // If water_residual is negative, adj will be more negative, except maybe in case
     // of a rounding error, which the max() will prevent.
-    let adj = floor(water_residual * 512.0) / 512.0;
-    hex_data[index].water_depth = max(cell.water_depth + adj, 0.0);
-    hex_data[index].water_depth_residual = max(water_residual - adj, 0.0);
+    // let adj = trunc(water_residual * 512.0) / 512.0;
+    // hex_data[index].water_depth = cell.water_depth + adj;
+    // hex_data[index].water_depth_residual = water_residual - adj;
+    hex_data[index].water_depth = max(water, 0.0);
 } 

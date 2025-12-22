@@ -61,7 +61,6 @@ struct Hex {
     rainfall: f32,       // Feet of rainfall added to this hex per step
     erosion_multiplier: f32,
     uplift: f32, // Feet of elevation added to this hex per step
-    original_land: bool,
 }
 
 // Map's dimensions define what constitutes a "round", since it determines how long it takes
@@ -710,7 +709,7 @@ fn simulate_erosion(
                 target_delta_hex.suspended_load,
             );
             println!(
-                "  total land (original): {:.3} ft  net land: {:.3} ft  total sediment: {:.3} ft",
+                "  total land (above sea level): {:.3} ft  net land: {:.3} ft  total sediment: {:.3} ft",
                 total_land, net_land, total_sediment
             );
             println!(
@@ -812,12 +811,6 @@ fn simulate_erosion(
         .map(|h| h.water_depth as f64)
         .sum();
 
-    let land_remaining: f64 = hex_map
-        .iter()
-        .flat_map(|row| row.iter().filter(|h| h.original_land))
-        .map(|h| h.elevation as f64)
-        .sum();
-
     let water_remaining_north: f64 = hex_map
         .iter()
         .take(NORTH_DESERT_HEIGHT)
@@ -886,9 +879,8 @@ fn simulate_erosion(
     );
 
     println!(
-        " water remaining on land: {:.2} ft-hexes, land remaining above sea level: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining NE basin: {:.2} ft-hexes,  water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
+        " water remaining on land: {:.2} ft-hexes, water remaining north: {:.2} ft-hexes, water remaining NE basin: {:.2} ft-hexes,  water remaining central: {:.2} ft-hexes, sediment in {:.1},  sediment out {:.1}",
         water_remaining,
-        land_remaining,
         water_remaining_north,
         water_remaining_ne_basin,
         water_remaining_central,
@@ -982,7 +974,6 @@ fn save_simulation_state_csv(
         "rainfall",
         "erosion_multiplier",
         "uplift",
-        "original_land",
     ])
     .expect("Failed to write CSV header");
 
@@ -1006,7 +997,6 @@ fn save_simulation_state_csv(
                 rainfall_bits.to_string(),
                 erosion_multiplier_bits.to_string(),
                 uplift_bits.to_string(),
-                hex.original_land.to_string(),
             ])
             .expect("Failed to write CSV record");
         }
@@ -1117,7 +1107,6 @@ fn load_simulation_state_csv(
                 rainfall: 0.0,
                 erosion_multiplier: 1.0,
                 uplift: 0.0,
-                original_land: false,
             });
         }
 
@@ -1132,7 +1121,6 @@ fn load_simulation_state_csv(
             .parse()
             .expect("Failed to parse erosion_multiplier bits");
         let uplift_bits: u32 = record[7].parse().expect("Failed to parse uplift bits");
-        let original_land: bool = record[8].parse().expect("Failed to parse original_land");
 
         hex_map[y][x] = Hex {
             coordinate: (x, y),
@@ -1142,7 +1130,6 @@ fn load_simulation_state_csv(
             rainfall: f32::from_bits(rainfall_bits),
             erosion_multiplier: f32::from_bits(erosion_multiplier_bits),
             uplift: f32::from_bits(uplift_bits),
-            original_land,
         };
     }
 
@@ -1397,17 +1384,6 @@ fn get_land_deviation(simplex: &Simplex, x: f64, y: f64, period: f64) -> i16 {
         as i16
 }
 
-// fn get_rainfall(rain_class: i32) -> f32 {
-//     match rain_class {
-//         0 => VERY_LOW_RAIN,
-//         1 => LOW_RAIN,
-//         2 => MEDIUM_RAIN,
-//         3 => HIGH_RAIN,
-//         4 => VERY_HIGH_RAIN,
-//         _ => 0.0,
-//     }
-// }
-
 fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
     let mut result = 0.0;
     let latitude = 25.0 + (y as f32 / 2.0 / ONE_DEGREE_LATITUDE_MILES);
@@ -1421,7 +1397,7 @@ fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
 
     result = result.clamp(0.0, 20.0);
 
-    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast) / (144.0 / HEX_FACTOR as f32))
+    let factor = ((72.0 / HEX_FACTOR as f32 - distance_from_coast) / (72.0 / HEX_FACTOR as f32))
         .clamp(0.0, 1.0);
     result *= 1.0 + factor * 2.0;
     result
@@ -1571,6 +1547,12 @@ fn main() {
                 let sea_width_for_river_y =
                     TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
 
+                let diagonally_deviated_y = deviated_y.min(
+                    deviated_y
+                        - (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH))
+                            / MAIN_RIVER_WIDTH,
+                );
+
                 let simplex_noise = noise_map[y][x];
                 let mut abyssal_plains_depth_adjustment = 0.9;
 
@@ -1601,7 +1583,7 @@ fn main() {
                     let mut min_inland_elevation = 0.0;
                     let mut max_inland_elevation = 0.0;
 
-                    if deviated_y < NORTH_DESERT_HEIGHT {
+                    if diagonally_deviated_y < NORTH_DESERT_HEIGHT {
                         // TODO: If/else is here because abs() didn't seem to work correctly, need to investigate.
                         let mut factor1: f32 = 0.0;
                         if deviated_x < TOTAL_SEA_WIDTH {
@@ -1613,9 +1595,12 @@ fn main() {
                                 / TRANSITION_PERIOD as f32)
                                 .clamp(0.0, 1.0);
                         }
-                        factor1 = factor1.min(deviated_y as f32 / RIVER_Y as f32);
+                        factor1 = factor1
+                            .min(deviated_y as f32 / RIVER_Y as f32)
+                            .clamp(0.0, 1.0);
                         factor1 = factor1.min(
-                            (NORTH_DESERT_HEIGHT - deviated_y) as f32 / TRANSITION_PERIOD as f32,
+                            (NORTH_DESERT_HEIGHT - diagonally_deviated_y) as f32
+                                / TRANSITION_PERIOD as f32,
                         );
                         factor1 = get_boundary_factor(factor1);
 
@@ -1627,8 +1612,12 @@ fn main() {
                         // Area is oval-shaped, not circular, with the longer axis running east-west.
                         // I keep fiddling with the ratio of the longer axis to the shorter axis, for awhile I'd settled on 2:1 but
                         // seem to be having trouble making up my mind.
-                        let mut factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / (800.0 / TRANSITION_PERIOD as f32), cy2)
-                            / (TRANSITION_PERIOD as f32))
+                        let mut factor2 = (cartesian_distance(
+                            0.0,
+                            cy1,
+                            (cx2 - cx1) / (800.0 / TRANSITION_PERIOD as f32),
+                            cy2,
+                        ) / (TRANSITION_PERIOD as f32))
                             .min(1.0);
 
                         let factor3 = (y as f32 / NORTH_DESERT_HEIGHT as f32).clamp(0.0, 1.0);
@@ -1643,7 +1632,7 @@ fn main() {
                         ) * factor2
                             + (1.0 - factor2) * OUTLET_ELEVATION;
                     } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                        let factor1 = ((deviated_y - NORTH_DESERT_HEIGHT) as f32
+                        let factor1 = ((diagonally_deviated_y - NORTH_DESERT_HEIGHT) as f32
                             / TRANSITION_PERIOD as f32)
                             .min(1.0);
                         let factor2 = ((NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT - deviated_y)
@@ -1657,6 +1646,12 @@ fn main() {
                             (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor1
                                 + NORTH_DESERT_MAX_ELEVATION;
                     } else {
+                        let factor0 = ((diagonally_deviated_y - NORTH_DESERT_HEIGHT) as f32
+                            / TRANSITION_PERIOD as f32)
+                            .min(1.0);
+                        let max0 = (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor0
+                        + NORTH_DESERT_MAX_ELEVATION;
+
                         let factor = ((deviated_y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT)
                             as f32
                             / TRANSITION_PERIOD as f32)
@@ -1665,9 +1660,9 @@ fn main() {
                             * get_boundary_factor(factor)
                             + BOUNDARY_ELEVATION;
                         max_inland_elevation = (SOUTH_MOUNTAINS_MAX_ELEVATION
-                            - CENTRAL_HIGHLAND_MAX_ELEVATION)
+                            - max0)
                             * factor
-                            + CENTRAL_HIGHLAND_MAX_ELEVATION;
+                            + max0;
                     }
 
                     let min_elevation =
@@ -1683,30 +1678,7 @@ fn main() {
                     // }
                 }
 
-                // if elevation < 0.0 {
-                //     elevation *= get_simplex_noise_for_hex(&simplex, x as f64, (y + HEIGHT_PIXELS * 3) as f64, TOTAL_SEA_WIDTH as f64);
-                // }
-
-                // Mostly to prevent very steep coastal cliffs
-                // This produces a cut whose downward slope is 2 * MOUNTAINS_MAX_ELEVATION / COAST_WIDTH
-                // The cut's deepest point is COAST_WIDTH * cut_factor from the coast, at a depth of 2 * MOUNTAINS_MAX_ELEVATION * cut_factor.
-                // Then it slopes upward at the multiplicative inverse of the initial slope (if I did my math right).
-                // if distance_from_coast > COAST_WIDTH as f32 * cut_factor {
-                //     elevation = elevation.min(distance_from_coast * 2.0 / COAST_WIDTH as f32 * SOUTH_MOUNTAINS_MAX_ELEVATION);
-                // } else {
-                //     elevation = elevation.min((COAST_WIDTH as f32 * cut_factor - distance_from_coast) * SOUTH_MOUNTAINS_MAX_ELEVATION / COAST_WIDTH as f32 / 2.0 + SOUTH_MOUNTAINS_MAX_ELEVATION * cut_factor * 2.0);
-                // }
-
-                // TODO: More realistic seafloor depth, and fix islands.
-                // Special features:
-                if x == BIG_VOLCANO_X && y == RIVER_Y {
-                    // A "volcano" sitting in the river's path. Initially a very tall one-hex column but the angle of repose logic will collapse it,
-                    // usually into a cone.
-                    // TODO: Make this an event that happens as rainfall is happening, after enough time that I can pick an interesting spot, e.g.
-                    // daming the main river, or preventing flow from central area into the north.
-                    // Also want more realistic slope, 30-35 degrees.
-                    // elevation += get_erruption_elevation(HEX_SIZE * 5.0);
-                } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE
+                if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE
                     && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE
                 {
                     // The northeast basin.
@@ -1757,28 +1729,7 @@ fn main() {
                         elevation =
                             pick_value_from_range(factor, 0.0, SOUTH_MOUNTAINS_MAX_ELEVATION);
                     }
-                } /* else {
-                      let mut rain_class = 0;
-                      if deviated_y > NORTH_DESERT_HEIGHT {
-                          rain_class += 1;
-                      }
-                      if deviated_y > NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                          rain_class += 1;
-                      }
-
-                      if (distance_from_coast as usize) < COAST_WIDTH - COAST_FRINGE {
-                          rainfall = get_rainfall(rain_class + 1);
-                      } else if (distance_from_coast as usize) > COAST_WIDTH + COAST_FRINGE {
-                          rainfall = get_rainfall(rain_class);
-                      } else {
-                          let factor = (distance_from_coast as usize + COAST_FRINGE - COAST_WIDTH)
-                              as f32
-                              / COAST_FRINGE as f32
-                              / 2.0;
-                          rainfall = get_rainfall(rain_class) * factor
-                              + get_rainfall(rain_class + 1) * (1.0 - factor);
-                      }
-                  } */
+                }
 
                 // As above, ignore y-deviation.
                 if distance_from_river_y == 0 {
@@ -1789,7 +1740,9 @@ fn main() {
                     // TODO: Two things we want to compensate for here: sea level rise and erosion due to rainfall.
                     // Going to test just doing the first thing, see how much I need for second thing.
                     // uplift = MAX_UPLIFT * elevation / SOUTH_MOUNTAINS_MAX_ELEVATION;
-                    uplift = (0.02 * YEARS_PER_STEP + RAIN_BASED_UPLIFT_FACTOR * rainfall) * elevation / local_max;
+                    uplift = (0.02 * YEARS_PER_STEP + RAIN_BASED_UPLIFT_FACTOR * rainfall)
+                        * elevation
+                        / local_max;
                 }
 
                 if uplift.is_nan() {
@@ -1832,7 +1785,6 @@ fn main() {
                             29.0,
                         ) * 0.05,
                     uplift,
-                    original_land: elevation > BASE_SEA_LEVEL,
                 });
             }
         }
