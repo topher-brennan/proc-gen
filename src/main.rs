@@ -1397,7 +1397,7 @@ fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
 
     result = result.clamp(0.0, 20.0);
 
-    let factor = ((72.0 / HEX_FACTOR as f32 - distance_from_coast) / (72.0 / HEX_FACTOR as f32))
+    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast) / (144.0 / HEX_FACTOR as f32))
         .clamp(0.0, 1.0);
     result *= 1.0 + factor * 2.0;
     result

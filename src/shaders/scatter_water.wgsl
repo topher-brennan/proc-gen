@@ -15,6 +15,8 @@ var<storage, read_write> hex_data: array<Hex>;
 var<storage, read> next_water: array<atomic<i32>>;
 @group(0) @binding(2)
 var<storage, read> next_load: array<atomic<i32>>;
+@group(0) @binding(3)
+var<storage, read> next_water_residual: array<atomic<i32>>;
 
 // Essentially a counterpart of init_water_step, maybe one or the other or both
 // needs a better name.
@@ -25,4 +27,5 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     hex_data[index].water_depth = max(bitcast<f32>(atomicLoad(&next_water[index])), 0.0);
     hex_data[index].suspended_load = max(bitcast<f32>(atomicLoad(&next_load[index])), 0.0);
+    hex_data[index].water_depth_residual = bitcast<f32>(atomicLoad(&next_water_residual[index]));
 } 

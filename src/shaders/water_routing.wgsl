@@ -20,6 +20,9 @@ var<storage, read_write> next_water: array<atomic<i32>>;
 @group(0) @binding(2)
 var<storage, read_write> next_load: array<atomic<i32>>;
 
+@group(0) @binding(3)
+var<storage, read_write> next_water_residual: array<atomic<i32>>;
+
 const NO_TARGET: u32 = 0xFFFFFFFFu;
 
 // Neighbor offsets for even columns
@@ -139,8 +142,15 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         move_f = min(move_f, MAX_FLOW);
 
         if (move_f > 0.0) {
-            let water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
+            var water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
+            var residual_outflow = 0.0;
             let load_outflow = sediment_fraction(hex) * move_f;
+            
+            // Residual moves proportionally to how much water moves relative to total water
+            if (water_outflow < 1.0 / 512.0) {
+                residual_outflow = water_outflow;
+                water_outflow = 0.0;
+            }
 
             // Subtract outflow from our own next buffers (atomic for thread safety)
             // We use compareExchange loop because atomicAdd only works on integers
@@ -163,6 +173,16 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 if (result.exchanged) { break; }
                 old_bits = result.old_value;
             }
+            
+            old_bits = atomicLoad(&next_water_residual[index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 - residual_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_water_residual[index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
 
             // Add inflow to target's next buffers (atomic for thread safety)
             old_bits = atomicLoad(&next_water[target_index]);
@@ -181,6 +201,16 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let new_f32 = old_f32 + load_outflow;
                 let new_bits = bitcast<i32>(new_f32);
                 let result = atomicCompareExchangeWeak(&next_load[target_index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+            
+            old_bits = atomicLoad(&next_water_residual[target_index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 + residual_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_water_residual[target_index], old_bits, new_bits);
                 if (result.exchanged) { break; }
                 old_bits = result.old_value;
             }

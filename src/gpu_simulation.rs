@@ -106,6 +106,7 @@ pub struct GpuSimulation {
     routing_bind_group: wgpu::BindGroup,
     next_water_buffer: wgpu::Buffer,
     next_load_buffer: wgpu::Buffer,
+    next_water_residual_buffer: wgpu::Buffer,
     scatter_pipeline: wgpu::ComputePipeline,
     scatter_bind_group: wgpu::BindGroup,
     scatter_bind_group_layout: wgpu::BindGroupLayout,
@@ -298,6 +299,17 @@ impl GpuSimulation {
                         },
                         count: None,
                     },
+                    // next_water_residual
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -358,6 +370,17 @@ impl GpuSimulation {
                     // next_load (atomic)
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // next_water_residual (atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -433,6 +456,17 @@ impl GpuSimulation {
                         },
                         count: None,
                     },
+                    // next_water_residual (atomic, read-only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -491,6 +525,13 @@ impl GpuSimulation {
             mapped_at_creation: false,
         });
 
+        let next_water_residual_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Next Water Residual Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let routing_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Routing Bind Group"),
             layout: &routing_bind_group_layout,
@@ -506,6 +547,10 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: next_load_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: next_water_residual_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -545,6 +590,10 @@ impl GpuSimulation {
                     binding: 2,
                     resource: next_load_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: next_water_residual_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -573,6 +622,10 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: next_load_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: next_water_residual_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -842,6 +895,7 @@ impl GpuSimulation {
             routing_bind_group,
             next_water_buffer,
             next_load_buffer,
+            next_water_residual_buffer,
             scatter_pipeline,
             scatter_bind_group,
             scatter_bind_group_layout,
@@ -902,7 +956,7 @@ impl GpuSimulation {
 
         // Note: rainfall_bind_group is recreated in resize_min_buffers()
 
-        // Resize next_water / next_load buffers
+        // Resize next_water / next_load / next_water_residual buffers
         let buf_bytes = (width * height * std::mem::size_of::<f32>()) as u64;
         self.next_water_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Next Water Buffer"),
@@ -912,6 +966,12 @@ impl GpuSimulation {
         });
         self.next_load_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Next Load Buffer"),
+            size: buf_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        self.next_water_residual_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Next Water Residual Buffer"),
             size: buf_bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
@@ -934,6 +994,10 @@ impl GpuSimulation {
                     binding: 2,
                     resource: self.next_load_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.next_water_residual_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -954,6 +1018,10 @@ impl GpuSimulation {
                     binding: 2,
                     resource: self.next_load_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.next_water_residual_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -973,6 +1041,10 @@ impl GpuSimulation {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: self.next_load_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.next_water_residual_buffer.as_entire_binding(),
                 },
             ],
         });

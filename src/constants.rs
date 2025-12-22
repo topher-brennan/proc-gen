@@ -23,7 +23,7 @@ pub const HIGH_RAIN: f32 = 34.0;
 pub const VERY_HIGH_RAIN: f32 = 53.0;
 pub const NE_BASIN_RAIN: f32 = 30.0;
 pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 24.0 * 60.0;
+pub const STEPS_PER_DAY: f32 = 24.0 * 6.0;
 pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
@@ -93,11 +93,12 @@ pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // Experimentally, a KD of 0.01 results in even filling of large lakes.
                                // Too high a value may result in water sloshing back and forth drilling
                                // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 1.0 / 7.0; // deposition rate fraction
+pub const KD: f32 = 1.0 / 100.0; // deposition rate fraction
 
-// In one test, the highest peak was observed to lose 50.3 feet over 58 rounds.
-// This tries to compensate for this.
-pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 300.0 * RAINFALL_FACTOR * KC * KE; // Feet per step
+// Used to attempt to compensate for predictable loss of highest peaks over time (~1 foot per 30 years).
+// Disabled as possible source of NaN values.
+// pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 1.0 * RAINFALL_FACTOR * KC * KE; // Feet per step
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 0.0;
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.
