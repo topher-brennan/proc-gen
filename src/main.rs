@@ -215,7 +215,7 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
 
     upload_hex_data(hex_map, &gpu_sim);
 
-    for _ in 0..200 {
+    for _ in 0..400 {
         // This is the only place this function is called,
         // may create opportunities for refactoring.
         gpu_sim.run_repose_step(width, height);
@@ -226,18 +226,18 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
 
 /// Calculates which hexes are "continental" based on connectivity to the eastern land boundary.
 /// Continental hexes are:
-/// 1. All hexes at x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH (the eastern boundary)
+/// 1. All hexes at x = BASIN_X_BOUNDARY (the eastern boundary)
 /// 2. Any hex with elevation > sea_level adjacent to a continental hex (spreading westward)
 /// 3. Any enclosed region completely surrounded by continental hexes (inland lakes/valleys)
 ///
 /// This excludes:
 /// - Islands (not connected to the continent)
-/// - The NE basin (x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH)
+/// - The NE basin (x > BASIN_X_BOUNDARY)
 /// - Coastal bays connected to the sea
 fn calculate_continental_hexes(hex_map: &Vec<Vec<Hex>>, sea_level: f32) -> Vec<Vec<bool>> {
     let height = HEIGHT_PIXELS;
     let width = WIDTH_HEXAGONS;
-    let continental_boundary_x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+    let continental_boundary_x = BASIN_X_BOUNDARY;
 
     let mut continental = vec![vec![false; width]; height];
     let mut queue = std::collections::VecDeque::new();
@@ -634,11 +634,11 @@ fn simulate_erosion(
             };
 
             // Calculate sea hex average elevation
-            // Sea hexes: x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH, not continental, elevation < sea level
+            // Sea hexes: x <= BASIN_X_BOUNDARY, not continental, elevation < sea level
             let (sea_total, sea_count): (f64, usize) = {
                 let mut sum = 0.0f64;
                 let mut count = 0usize;
-                let sea_boundary_x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+                let sea_boundary_x = BASIN_X_BOUNDARY;
 
                 for y in 0..HEIGHT_PIXELS {
                     for x in 0..=sea_boundary_x {
@@ -749,12 +749,14 @@ fn simulate_erosion(
 
             let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
             render_frame(hex_map, &mut frame_buffer, current_sea_level, true);
-            save_buffer_png(
+            if let Err(e) = save_buffer_png(
                 "terrain_water.png",
                 &frame_buffer,
                 WIDTH_PIXELS as u32,
                 HEIGHT_PIXELS as u32,
-            );
+            ) {
+                eprintln!("Warning: Failed to save terrain_water.png: {}", e);
+            }
 
             render_frame(hex_map, &mut frame_buffer, current_sea_level, false);
 
@@ -762,16 +764,18 @@ fn simulate_erosion(
             if step == 0 {
                 tag = "_initial";
             }
-            save_buffer_png(
+            if let Err(e) = save_buffer_png(
                 &format!("terrain{tag}.png", tag = tag),
                 &frame_buffer,
                 WIDTH_PIXELS as u32,
                 HEIGHT_PIXELS as u32,
-            );
+            ) {
+                eprintln!("Warning: Failed to save terrain{}.png: {}", tag, e);
+            }
             // Only save CSV every 100 rounds to avoid performance issues
             if step % (1000 * log_steps) == 0 {
                 let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
-                save_simulation_state_csv(
+                if let Err(e) = save_simulation_state_csv(
                     &format!("terrain{tag}.csv", tag = tag),
                     hex_map,
                     seed,
@@ -783,7 +787,9 @@ fn simulate_erosion(
                     initial_central_avg,
                     initial_south_avg,
                     total_elapsed_secs,
-                );
+                ) {
+                    eprintln!("Warning: Failed to save terrain{}.csv: {}", tag, e);
+                }
             }
         } else if step % (log_steps / 10) == 0 {
             // TODO: Get the heartbeat to work.
@@ -821,7 +827,7 @@ fn simulate_erosion(
     let water_remaining_ne_basin: f64 = hex_map
         .iter()
         .take(NORTH_DESERT_HEIGHT)
-        .flat_map(|row| row.iter().skip(TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH))
+        .flat_map(|row| row.iter().skip(BASIN_X_BOUNDARY))
         .map(|h| h.water_depth as f64)
         .sum();
 
@@ -905,7 +911,10 @@ fn print_elevation_and_sediment(gpu_sim: &GpuSimulation, step_label: &str) {
     );
 }
 
-fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
+fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let temp_path = format!("{}.tmp", path);
+    
+    // Write to temporary file first
     let mut img: RgbImage = RgbImage::new(width, height);
     for (idx, pixel) in buffer.iter().enumerate() {
         let r = ((pixel >> 16) & 0xFF) as u8;
@@ -915,7 +924,12 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) {
         let y = (idx as u32) / width;
         img.put_pixel(x, y, Rgb([r, g, b]));
     }
-    img.save(path).expect("Failed to save image");
+    // Explicitly specify PNG format since temp file has .tmp extension
+    img.save_with_format(&temp_path, image::ImageFormat::Png)?;
+    
+    // Atomically rename temp file to final path
+    std::fs::rename(&temp_path, path)?;
+    Ok(())
 }
 
 fn save_simulation_state_csv(
@@ -930,79 +944,83 @@ fn save_simulation_state_csv(
     initial_central_avg: f32,
     initial_south_avg: f32,
     elapsed_secs: f64,
-) {
-    let file = File::create(path).expect("Failed to create CSV file");
-    let mut wtr = WriterBuilder::new().flexible(true).from_writer(file);
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temp_path = format!("{}.tmp", path);
+    
+    // Write to temporary file first (in a block to ensure file is closed before rename)
+    {
+        let file = File::create(&temp_path)?;
+        let mut wtr = WriterBuilder::new().flexible(true).from_writer(file);
 
-    // Write mini-table for seed, step, initial elevations, and elapsed time at the top
-    wtr.write_record(&[
-        "seed",
-        "step",
-        "initial_max_elevation",
-        "initial_avg_elevation",
-        "initial_sea_avg_elevation",
-        "initial_north_avg",
-        "initial_central_avg",
-        "initial_south_avg",
-        "elapsed_secs",
-    ])
-    .expect("Failed to write metadata header");
-    wtr.write_record(&[
-        seed.to_string(),
-        step.to_string(),
-        initial_max_elevation.to_bits().to_string(),
-        initial_avg_elevation.to_bits().to_string(),
-        initial_sea_avg_elevation.to_bits().to_string(),
-        initial_north_avg.to_bits().to_string(),
-        initial_central_avg.to_bits().to_string(),
-        initial_south_avg.to_bits().to_string(),
-        elapsed_secs.to_bits().to_string(),
-    ])
-    .expect("Failed to write metadata values");
+        // Write mini-table for seed, step, initial elevations, and elapsed time at the top
+        wtr.write_record(&[
+            "seed",
+            "step",
+            "initial_max_elevation",
+            "initial_avg_elevation",
+            "initial_sea_avg_elevation",
+            "initial_north_avg",
+            "initial_central_avg",
+            "initial_south_avg",
+            "elapsed_secs",
+        ])?;
+        wtr.write_record(&[
+            seed.to_string(),
+            step.to_string(),
+            initial_max_elevation.to_bits().to_string(),
+            initial_avg_elevation.to_bits().to_string(),
+            initial_sea_avg_elevation.to_bits().to_string(),
+            initial_north_avg.to_bits().to_string(),
+            initial_central_avg.to_bits().to_string(),
+            initial_south_avg.to_bits().to_string(),
+            elapsed_secs.to_bits().to_string(),
+        ])?;
 
-    // Blank separator row
-    wtr.write_record(&[""])
-        .expect("Failed to write separator row");
+        // Blank separator row
+        wtr.write_record(&[""])?;
 
-    // Write main hex data header
-    wtr.write_record(&[
-        "x",
-        "y",
-        "elevation",
-        "water_depth",
-        "suspended_load",
-        "rainfall",
-        "erosion_multiplier",
-        "uplift",
-    ])
-    .expect("Failed to write CSV header");
+        // Write main hex data header
+        wtr.write_record(&[
+            "x",
+            "y",
+            "elevation",
+            "water_depth",
+            "suspended_load",
+            "rainfall",
+            "erosion_multiplier",
+            "uplift",
+        ])?;
 
-    // Write each hex as a row
-    for (y, row) in hex_map.iter().enumerate() {
-        for (x, hex) in row.iter().enumerate() {
-            // Bitcast floating point values to preserve exact precision
-            let elevation_bits = hex.elevation.to_bits();
-            let water_depth_bits = hex.water_depth.to_bits();
-            let suspended_load_bits = hex.suspended_load.to_bits();
-            let rainfall_bits = hex.rainfall.to_bits();
-            let erosion_multiplier_bits = hex.erosion_multiplier.to_bits();
-            let uplift_bits = hex.uplift.to_bits();
+        // Write each hex as a row
+        for (y, row) in hex_map.iter().enumerate() {
+            for (x, hex) in row.iter().enumerate() {
+                // Bitcast floating point values to preserve exact precision
+                let elevation_bits = hex.elevation.to_bits();
+                let water_depth_bits = hex.water_depth.to_bits();
+                let suspended_load_bits = hex.suspended_load.to_bits();
+                let rainfall_bits = hex.rainfall.to_bits();
+                let erosion_multiplier_bits = hex.erosion_multiplier.to_bits();
+                let uplift_bits = hex.uplift.to_bits();
 
-            wtr.write_record(&[
-                x.to_string(),
-                y.to_string(),
-                elevation_bits.to_string(),
-                water_depth_bits.to_string(),
-                suspended_load_bits.to_string(),
-                rainfall_bits.to_string(),
-                erosion_multiplier_bits.to_string(),
-                uplift_bits.to_string(),
-            ])
-            .expect("Failed to write CSV record");
+                wtr.write_record(&[
+                    x.to_string(),
+                    y.to_string(),
+                    elevation_bits.to_string(),
+                    water_depth_bits.to_string(),
+                    suspended_load_bits.to_string(),
+                    rainfall_bits.to_string(),
+                    erosion_multiplier_bits.to_string(),
+                    uplift_bits.to_string(),
+                ])?;
+            }
         }
-    }
 
-    wtr.flush().expect("Failed to flush CSV writer");
+        wtr.flush()?;
+    } // File is closed here when wtr goes out of scope
+    
+    // Atomically rename temp file to final path
+    std::fs::rename(&temp_path, path)?;
+    Ok(())
 }
 
 fn load_simulation_state_csv(
@@ -1147,7 +1165,9 @@ fn load_simulation_state_csv(
     )
 }
 
-fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) {
+fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) -> Result<(), Box<dyn std::error::Error>> {
+    let temp_path = format!("{}.tmp", path);
+    
     let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
     // For each pixel, find the nearest hex and use its elevation
@@ -1173,7 +1193,12 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) {
         }
     }
 
-    img.save(path).expect("Failed to save image");
+    // Explicitly specify PNG format since temp file has .tmp extension
+    img.save_with_format(&temp_path, image::ImageFormat::Png)?;
+    
+    // Atomically rename temp file to final path
+    std::fs::rename(&temp_path, path)?;
+    Ok(())
 }
 
 // Renders current hex_map state into an RGB buffer (u32 per pixel)
@@ -1384,7 +1409,7 @@ fn get_land_deviation(simplex: &Simplex, x: f64, y: f64, period: f64) -> i16 {
         as i16
 }
 
-fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
+fn get_rainfall(y: usize, distance_from_coast: f32, distance_from_basins: f32) -> f32 {
     let mut result = 0.0;
     let latitude = 25.0 + (y as f32 / 2.0 / ONE_DEGREE_LATITUDE_MILES);
     if latitude < 29.0 {
@@ -1397,7 +1422,7 @@ fn get_rainfall(y: usize, distance_from_coast: f32) -> f32 {
 
     result = result.clamp(0.0, 20.0);
 
-    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast) / (144.0 / HEX_FACTOR as f32))
+    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast.min(distance_from_basins)) / (144.0 / HEX_FACTOR as f32))
         .clamp(0.0, 1.0);
     result *= 1.0 + factor * 2.0;
     result
@@ -1517,7 +1542,7 @@ fn main() {
 
         for y in 0..HEIGHT_PIXELS {
             hex_map.push(Vec::new());
-            let distance_from_river_y = (y as i16 - RIVER_Y as i16).abs();
+            let distance_from_source_y = (y as i16 - SOURCE_Y as i16).abs();
             let sea_deviation = get_sea_deviation(&simplex, y as f64, HEIGHT_PIXELS as f64 / 1.5);
             // let shelf_deviation = get_sea_deviation(&simplex, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
             let cut_factor = -0.06
@@ -1544,6 +1569,7 @@ fn main() {
                 let deviated_x: usize = (x as i16 + x_deviation).max(0) as usize;
                 let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
                 let distance_from_coast = deviated_x as f32 - TOTAL_SEA_WIDTH as f32;
+                let distance_from_basins = BASIN_X_BOUNDARY as f32 - x as f32;
                 let sea_width_for_river_y =
                     TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
 
@@ -1591,7 +1617,7 @@ fn main() {
                                 / TRANSITION_PERIOD as f32)
                                 .clamp(0.0, 1.0);
                         } else {
-                            factor1 = ((deviated_x - TOTAL_SEA_WIDTH) as f32
+                            factor1 = (distance_from_coast.min(distance_from_basins)
                                 / TRANSITION_PERIOD as f32)
                                 .clamp(0.0, 1.0);
                         }
@@ -1615,7 +1641,7 @@ fn main() {
                         let mut factor2 = (cartesian_distance(
                             0.0,
                             cy1,
-                            (cx2 - cx1) / (800.0 / TRANSITION_PERIOD as f32),
+                            (cx2 - cx1) / 2.0,
                             cy2,
                         ) / (TRANSITION_PERIOD as f32))
                             .min(1.0);
@@ -1671,52 +1697,52 @@ fn main() {
                     local_max = max_inland_elevation * (1.0 - coast_factor);
 
                     elevation = pick_value_from_range(simplex_noise, min_elevation, local_max);
-
-                    // Un-comment this code to see boundaries between regions.
-                    // if deviated_y == NORTH_DESERT_HEIGHT || deviated_y == NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                    //     elevation += HEX_SIZE;
-                    // }
                 }
 
-                if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE
+                if x > BASIN_X_BOUNDARY
                     && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE
                 {
                     // The northeast basin.
                     // TODO: Refactor this so I'm not doing the goofy thing in the rainfall step.
                     elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
                     // This specifically doesn't include y-deviation so the river source is exactly where we want it to be.
-                    if distance_from_river_y != 0 {
-                        let factor = ((distance_from_river_y) as f32
-                            / (NORTH_DESERT_HEIGHT as f32 - RIVER_Y as f32))
+                    if distance_from_source_y != 0 {
+                        let factor = ((distance_from_source_y) as f32
+                            / (NORTH_DESERT_HEIGHT as f32 - SOURCE_Y as f32))
                             .min(1.0);
                         elevation += (NORTH_DESERT_MAX_ELEVATION * 0.01) * factor;
+                        elevation -= (x - BASIN_X_BOUNDARY) as f32;
                     }
                 }
 
-                if deviated_x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE as usize {
+                if x <= BASIN_X_BOUNDARY as usize {
                     elevation +=
                         get_white_noise(seed, x, y) * 0.01 * elevation.max(HEX_SIZE as f32);
                 }
 
                 let mut rainfall = 0.0;
-                if x < TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
-                    rainfall = get_rainfall(y, distance_from_coast);
+                // TODO: Possibly should be <= or even <= + 1?
+                if x < BASIN_X_BOUNDARY {
+                    rainfall = get_rainfall(y, distance_from_coast, distance_from_basins);
                 } else if y < NE_BASIN_HEIGHT {
                     rainfall = NE_BASIN_RAIN;
                 }
 
-                if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE {
+                if x > BASIN_X_BOUNDARY {
                     if y <= NE_BASIN_HEIGHT {
-                        // if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                        // if x > BASIN_X_BOUNDARY {
                         //     rainfall = VERY_HIGH_RAIN;
                         // }
-                        if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH + NE_BASIN_FRINGE {
+                        if x > BASIN_X_BOUNDARY + NE_BASIN_FRINGE {
                             // TODO: I don't remember why this is 1.01, probably refactoring would make it clearer.
                             elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
                         }
                     } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                         elevation = NORTH_DESERT_MAX_ELEVATION * 1.02;
-                    } else if x > TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH {
+                    } else if x > BASIN_X_BOUNDARY {
+                        elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
+                        elevation += (x - BASIN_X_BOUNDARY - 1) as f32 * HEX_SIZE;
+                        
                         let no_increments: f32 =
                             ((SOUTH_MOUNTAINS_MAX_ELEVATION) / 1000.0).ceil() + 1.0;
                         let boundary = NE_BASIN_HEIGHT + NE_BASIN_FRINGE;
@@ -1727,12 +1753,12 @@ fn main() {
                                 / no_increments)
                             .clamp(0.0, 1.0);
                         elevation =
-                            pick_value_from_range(factor, 0.0, SOUTH_MOUNTAINS_MAX_ELEVATION);
+                            elevation.min(pick_value_from_range(factor, 0.0, SOUTH_MOUNTAINS_MAX_ELEVATION));
                     }
                 }
 
                 // As above, ignore y-deviation.
-                if distance_from_river_y == 0 {
+                if distance_from_source_y == 0 {
                     elevation = elevation.min(NORTH_DESERT_MAX_ELEVATION * 1.01);
                 }
 
@@ -1884,11 +1910,11 @@ fn main() {
         };
 
         // Calculate initial sea hex average elevation
-        // Sea hexes: x <= TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH, not continental, elevation < sea level
+        // Sea hexes: x <= BASIN_X_BOUNDARY, not continental, elevation < sea level
         let (sea_total, sea_count): (f64, usize) = {
             let mut sum = 0.0f64;
             let mut count = 0usize;
-            let sea_boundary_x = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+            let sea_boundary_x = BASIN_X_BOUNDARY;
 
             for y in 0..HEIGHT_PIXELS {
                 for x in 0..=sea_boundary_x {
@@ -1921,13 +1947,16 @@ fn main() {
         // Generate initial terrain and rainfall PNGs
         let mut init_frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
         render_frame(&hex_map, &mut init_frame_buffer, BASE_SEA_LEVEL, false);
-        save_buffer_png(
+        if let Err(e) = save_buffer_png(
             "terrain_initial.png",
             &init_frame_buffer,
             WIDTH_PIXELS as u32,
             HEIGHT_PIXELS as u32,
-        );
-        println!("Saved terrain_initial.png");
+        ) {
+            eprintln!("Warning: Failed to save terrain_initial.png: {}", e);
+        } else {
+            println!("Saved terrain_initial.png");
+        }
 
         // Rainfall map - max expected is ~95.8 * RAINFALL_FACTOR
         // let max_expected_rainfall = 95.8 * RAINFALL_FACTOR;
@@ -1988,14 +2017,16 @@ fn main() {
     // Time PNG conversion
     let png_start = Instant::now();
     render_frame(&mut hex_map, &mut frame_buffer, final_sea_level, true);
-    save_buffer_png(
+    if let Err(e) = save_buffer_png(
         "terrain_water.png",
         &frame_buffer,
         WIDTH_PIXELS as u32,
         HEIGHT_PIXELS as u32,
-    );
+    ) {
+        eprintln!("Warning: Failed to save terrain_water.png: {}", e);
+    }
     let final_step = starting_step + remaining_steps;
-    save_simulation_state_csv(
+    if let Err(e) = save_simulation_state_csv(
         "terrain_water_final.csv",
         &hex_map,
         seed,
@@ -2007,16 +2038,20 @@ fn main() {
         initial_central_avg,
         initial_south_avg,
         final_elapsed_secs,
-    );
+    ) {
+        eprintln!("Warning: Failed to save terrain_water_final.csv: {}", e);
+    }
 
     render_frame(&mut hex_map, &mut frame_buffer, final_sea_level, false);
-    save_buffer_png(
+    if let Err(e) = save_buffer_png(
         "terrain.png",
         &frame_buffer,
         WIDTH_PIXELS as u32,
         HEIGHT_PIXELS as u32,
-    );
-    save_simulation_state_csv(
+    ) {
+        eprintln!("Warning: Failed to save terrain.png: {}", e);
+    }
+    if let Err(e) = save_simulation_state_csv(
         "terrain_final.csv",
         &hex_map,
         seed,
@@ -2028,7 +2063,9 @@ fn main() {
         initial_central_avg,
         initial_south_avg,
         final_elapsed_secs,
-    );
+    ) {
+        eprintln!("Warning: Failed to save terrain_final.csv: {}", e);
+    }
 
     let save_duration = png_start.elapsed();
     println!("Image rendering and saving took: {:?}", save_duration);

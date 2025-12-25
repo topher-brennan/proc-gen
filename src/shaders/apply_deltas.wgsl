@@ -28,7 +28,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let delta_f32 = bitcast<f32>(delta_u32);
 
     if (delta_f32 != 0.0) {
-        hex_data[index].elevation = hex_data[index].elevation + delta_f32;
+        if (delta_f32) < 512.0 {
+            hex_data[index].elevation_residual = hex_data[index].elevation_residual + delta_f32;
+        } else {
+            hex_data[index].elevation = hex_data[index].elevation + delta_f32;
+        }
     }
 
     // Reset the delta buffer for the next simulation step.

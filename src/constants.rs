@@ -32,10 +32,12 @@ pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
 pub const EVAPORATION_FACTOR: f32 = YEARS_PER_STEP * 0.2;
 pub const MAX_EVAPORATION_PER_STEP: f32 = 2.0 * YEARS_PER_STEP;
 
+// Top edge of the map is assumed to be 25 degrees south latitude.
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.0;
 pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
 pub const DEVIATION_PERIOD: f64 = 96.0;
 pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
+pub const SOURCE_Y: usize = NORTH_DESERT_HEIGHT / 2;
 pub const NORTH_DESERT_HEIGHT: usize = (6.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const NE_BASIN_HEIGHT: usize = NORTH_DESERT_HEIGHT;
 pub const CENTRAL_HIGHLAND_HEIGHT: usize =
@@ -67,12 +69,14 @@ pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN
 pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
-pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_300.0;
-pub const LAKE_MIN_ELEVATION: f32 = 0.0;
+pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_800.0;
+pub const LAKE_MIN_ELEVATION: f32 = -1_900.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
-pub const RIVER_SOURCE_X: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH - NE_BASIN_FRINGE + 1;
+pub const BASIN_X_BOUNDARY: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
+// TODO: Fix this—it's putting the river source outside the basin proper.
+pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + 1;
 pub const SEA_LEVEL: f32 = 0.0;
 pub const BASE_SEA_LEVEL: f32 = SEA_LEVEL;
 // TODO: Do we still need this? Maybe for rainfall logic.
@@ -82,11 +86,11 @@ pub const CONTINENTAL_SHELF_DEPTH: f32 = 1000.0;
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_700.0;
 pub const FAR_NORTH_DESERT_MAX_ELEVATION: f32 = 3_300.0;
 pub const CENTRAL_HIGHLAND_MAX_ELEVATION: f32 = 10_100.0;
-pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 15_900.0;
+pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 16_900.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 11_200.0;
 pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
-pub const NE_BASIN_MIN_ELEVATION: f32 = 600.0;
+pub const NE_BASIN_MIN_ELEVATION: f32 = BOUNDARY_ELEVATION;
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
@@ -97,12 +101,12 @@ pub const KD: f32 = 1.0 / 100.0; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time (~1 foot per 30 years).
 // Disabled as possible source of NaN values.
-// pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 1.0 * RAINFALL_FACTOR * KC * KE; // Feet per step
-pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 0.0;
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 1.0 * RAINFALL_FACTOR * KC * KE; // Feet per step
+// pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 0.0;
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.
-pub const DEFAULT_ROUNDS: u32 = 4_800;
+pub const DEFAULT_ROUNDS: u32 = 1_000;
 // TODO: Might be nice to have two levels of water to display in generated images,
 // a "hex-inch" could represent a river too deep to be forded but only a few tens of
 // feet across (vs. about half a mile for the entire hex). But to mark sea that's

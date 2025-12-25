@@ -35,7 +35,7 @@ fn main() {
     // Compute BASIN_X_BOUNDARY = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH
     let total_sea_width = eval_usize(&constants, "TOTAL_SEA_WIDTH");
     let north_desert_width = eval_usize(&constants, "NORTH_DESERT_WIDTH");
-    let basin_x_boundary = total_sea_width + north_desert_width;
+    let basin_x_boundary = eval_usize(&constants, "BASIN_X_BOUNDARY");
     let basin_y_boundary = eval_usize(&constants, "NE_BASIN_HEIGHT");
 
     // TODO: Figure out how to make these integer types where appropriate.

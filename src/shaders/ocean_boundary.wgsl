@@ -67,6 +67,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         sediment_out = fluid_out * sediment_fraction(cell);
     }
 
+    // TODO: Fix this to work with residual channel.
     // Write outflow amounts (one entry per row)
     out_data[y].water_out = water_out;
     out_data[y].sediment_out = sediment_out;
