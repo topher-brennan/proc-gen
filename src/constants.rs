@@ -23,7 +23,7 @@ pub const HIGH_RAIN: f32 = 34.0;
 pub const VERY_HIGH_RAIN: f32 = 53.0;
 pub const NE_BASIN_RAIN: f32 = 30.0;
 pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 24.0 * 6.0;
+pub const STEPS_PER_DAY: f32 = 24.0 * 60.0;
 pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
