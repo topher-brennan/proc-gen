@@ -11,16 +11,6 @@ pub const HEIGHT_PIXELS: usize = 2160;
 pub const WIDTH_PIXELS: usize = 3840;
 pub const WIDTH_HEXAGONS: usize = (WIDTH_PIXELS as f32 / HEX_FACTOR) as usize;
 
-// Use for inland north desert.
-pub const VERY_LOW_RAIN: f32 = 1.0;
-// Used for coastal north desert and inland central highland.
-pub const LOW_RAIN: f32 = 10.0;
-// Used for coastal central highland and inland south mountains.
-pub const MEDIUM_RAIN: f32 = 21.0;
-// Used for coastal south mountains.
-pub const HIGH_RAIN: f32 = 34.0;
-// Used for NE basin.
-pub const VERY_HIGH_RAIN: f32 = 53.0;
 pub const NE_BASIN_RAIN: f32 = 30.0;
 pub const DAYS_PER_YEAR: f32 = 365.2422;
 pub const STEPS_PER_DAY: f32 = 24.0 * 60.0;
@@ -55,15 +45,7 @@ pub const DELTA_SEED_WIDTH: usize = 0;
 // River runs through north desert
 pub const NORTH_DESERT_WIDTH: usize = MAIN_RIVER_WIDTH + DELTA_SEED_WIDTH;
 pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
-pub const COAST_FRINGE: usize = 18;
 pub const NE_BASIN_FRINGE: usize = 4;
-pub const NORTH_DESERT_RAIN: f32 = (COAST_WIDTH as f32 * LOW_RAIN
-    + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * VERY_LOW_RAIN)
-    * NORTH_DESERT_HEIGHT as f32;
-// Rain on the part of the central highland whose east-west extent corresponds to the north desert.
-pub const MAIN_CENTRAL_HIGHLAND_RAIN: f32 = (COAST_WIDTH as f32 * MEDIUM_RAIN
-    + (NORTH_DESERT_WIDTH - COAST_WIDTH) as f32 * LOW_RAIN)
-    * CENTRAL_HIGHLAND_HEIGHT as f32;
 // An attempt to balance water in north and central regions mathematically.
 // TODO: Maybe fix at 140?
 pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
@@ -79,9 +61,6 @@ pub const BASIN_X_BOUNDARY: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
 pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + 1;
 pub const SEA_LEVEL: f32 = 0.0;
 pub const BASE_SEA_LEVEL: f32 = SEA_LEVEL;
-// TODO: Do we still need this? Maybe for rainfall logic.
-// Could maybe replace this with a maximum depth of surface currents of 330 feet.
-pub const CONTINENTAL_SHELF_DEPTH: f32 = 1000.0;
 
 pub const NORTH_DESERT_MAX_ELEVATION: f32 = 8_700.0;
 pub const FAR_NORTH_DESERT_MAX_ELEVATION: f32 = 3_300.0;
@@ -121,6 +100,3 @@ pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SOUTH_MOUNTAINS_MAX_ELEVATION;
 pub const LOG_ROUNDS: u32 = 100;
-
-pub const BIG_VOLCANO_X: usize =
-    TOTAL_SEA_WIDTH + DELTA_SEED_WIDTH + (1_000.0 / HEX_FACTOR) as usize;

@@ -29,7 +29,6 @@ fn main() {
     let evaporation_factor = eval_f32(&constants, "EVAPORATION_FACTOR");
     let max_evaporation_per_step = eval_f32(&constants, "MAX_EVAPORATION_PER_STEP");
     let abyssal_depth = eval_f32(&constants, "ABYSSAL_PLAINS_MAX_DEPTH");
-    let shelf_depth = eval_f32(&constants, "CONTINENTAL_SHELF_DEPTH");
     let ne_basin_min_elevation = eval_f32(&constants, "NE_BASIN_MIN_ELEVATION");
 
     // Compute BASIN_X_BOUNDARY = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH
@@ -64,7 +63,6 @@ const BASIN_Y_BOUNDARY: f32 = {basin_y_boundary}.0;
 const NE_BASIN_MIN_ELEVATION: f32 = {ne_basin_min_elevation};
 
 const ABYSSAL_PLAINS_MAX_DEPTH: f32 = {abyssal_depth};
-const CONTINENTAL_SHELF_DEPTH: f32 = {shelf_depth};
 "#,
         hex_size = fmt_float(hex_size),
         hex_factor = fmt_float(hex_factor),
@@ -79,7 +77,6 @@ const CONTINENTAL_SHELF_DEPTH: f32 = {shelf_depth};
         max_evaporation_per_step = fmt_float(max_evaporation_per_step),
         ne_basin_min_elevation = fmt_float(ne_basin_min_elevation),
         abyssal_depth = fmt_float(abyssal_depth),
-        shelf_depth = fmt_float(shelf_depth),
     );
 
     let out_dir = env::var("OUT_DIR").unwrap();

@@ -14,7 +14,6 @@ use constants::*;
 use csv::{ReaderBuilder, WriterBuilder};
 use noise::{NoiseFn, Simplex};
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::fs::File;
 
 #[derive(Parser)]
@@ -418,9 +417,9 @@ fn simulate_erosion(
     gpu_sim.resize_min_buffers(width, height);
 
     // TODO: Get these working again.
-    let mut total_outflow = 0.0f32;
-    let mut total_sediment_in = 0.0f32;
-    let mut total_sediment_out = 0.0f32;
+    let total_outflow = 0.0f32;
+    let total_sediment_in = 0.0f32;
+    let total_sediment_out = 0.0f32;
 
     let mut current_sea_level = BASE_SEA_LEVEL;
 
@@ -1437,7 +1436,7 @@ fn pick_value_from_range(normal: f32, min: f32, max: f32) -> f32 {
         println!("Min is greater than max: {} > {}", min, max);
         panic!("Min is greater than max");
     }
-    (normal * (max - min) + min)
+    normal * (max - min) + min
 }
 
 fn get_boundary_factor(base_factor: f32) -> f32 {
@@ -1544,13 +1543,6 @@ fn main() {
             hex_map.push(Vec::new());
             let distance_from_source_y = (y as i16 - SOURCE_Y as i16).abs();
             let sea_deviation = get_sea_deviation(&simplex, y as f64, HEIGHT_PIXELS as f64 / 1.5);
-            // let shelf_deviation = get_sea_deviation(&simplex, (y + HEIGHT_PIXELS * 3 / 2) as f64, HEIGHT_PIXELS as f64);
-            let cut_factor = -0.06
-                - get_simplex_noise(
-                    &simplex,
-                    (y + HEIGHT_PIXELS * 5 / 2) as f64,
-                    HEIGHT_PIXELS as f64 / 1.5,
-                ) * 0.06;
 
             for x in 0..WIDTH_HEXAGONS {
                 let mut elevation = 0.0;
@@ -1638,7 +1630,7 @@ fn main() {
                         // Area is oval-shaped, not circular, with the longer axis running east-west.
                         // I keep fiddling with the ratio of the longer axis to the shorter axis, for awhile I'd settled on 2:1 but
                         // seem to be having trouble making up my mind.
-                        let mut factor2 = (cartesian_distance(
+                        let factor2 = (cartesian_distance(
                             0.0,
                             cy1,
                             (cx2 - cx1) / 2.0,
@@ -1715,24 +1707,23 @@ fn main() {
                     }
                 }
 
+                // TODO: Not sure I like this, the idea was with variable erosion this wouldn't be necessary.
                 if x <= BASIN_X_BOUNDARY as usize {
                     elevation +=
                         get_white_noise(seed, x, y) * 0.01 * elevation.max(HEX_SIZE as f32);
                 }
 
                 let mut rainfall = 0.0;
-                // TODO: Possibly should be <= or even <= + 1?
                 if x < BASIN_X_BOUNDARY {
                     rainfall = get_rainfall(y, distance_from_coast, distance_from_basins);
-                } else if y < NE_BASIN_HEIGHT {
-                    rainfall = NE_BASIN_RAIN;
                 }
 
                 if x > BASIN_X_BOUNDARY {
-                    if y <= NE_BASIN_HEIGHT {
-                        // if x > BASIN_X_BOUNDARY {
-                        //     rainfall = VERY_HIGH_RAIN;
-                        // }
+                    if y < NE_BASIN_HEIGHT {
+                        // This creates a one-hex boundary of no rain.
+                        if x > BASIN_X_BOUNDARY {
+                            rainfall = NE_BASIN_RAIN;
+                        }
                         if x > BASIN_X_BOUNDARY + NE_BASIN_FRINGE {
                             // TODO: I don't remember why this is 1.01, probably refactoring would make it clearer.
                             elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
@@ -1765,7 +1756,6 @@ fn main() {
                 if elevation > 0.0 {
                     // TODO: Two things we want to compensate for here: sea level rise and erosion due to rainfall.
                     // Going to test just doing the first thing, see how much I need for second thing.
-                    // uplift = MAX_UPLIFT * elevation / SOUTH_MOUNTAINS_MAX_ELEVATION;
                     uplift = (0.02 * YEARS_PER_STEP + RAIN_BASED_UPLIFT_FACTOR * rainfall)
                         * elevation
                         / local_max;
