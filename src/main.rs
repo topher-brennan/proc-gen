@@ -433,10 +433,6 @@ fn simulate_erosion(
         "  BASE_SEA_LEVEL {}  NORTH_DESERT_HEIGHT {}  CENTRAL_HIGHLAND_HEIGHT {}  SOUTH_MOUNTAINS_HEIGHT {}",
         BASE_SEA_LEVEL, NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT
     );
-    println!(
-        "  RAINFALL_FACTOR {}  EVAPORATION_FACTOR {}",
-        RAINFALL_FACTOR, EVAPORATION_FACTOR
-    );
     println!("  RIVER_Y {}  RIVER_SOURCE_X {}", RIVER_Y, RIVER_SOURCE_X);
 
     let round_size = get_round_size();
@@ -446,9 +442,8 @@ fn simulate_erosion(
 
     for step_offset in 0..steps {
         let step = starting_step + step_offset;
-        let seasonal_rain_multiplier = 1.0
-            + ((step + 22170000 * 9) as f32 * 2.0 * std::f32::consts::PI * YEARS_PER_STEP + std::f32::consts::PI)
-                .cos();
+        let year = step as f32 * YEARS_PER_STEP;
+        let seasonal_rain_multiplier = 1.0 + (year * 2.0 * std::f32::consts::PI + std::f32::consts::PI).cos();
 
         if step % log_steps == 0 {
             let gpu_hex_data = gpu_sim.download_hex_data();
@@ -772,7 +767,7 @@ fn simulate_erosion(
                 eprintln!("Warning: Failed to save terrain{}.png: {}", tag, e);
             }
             // Only save CSV every 100 rounds to avoid performance issues
-            if step % (1000 * log_steps) == 0 {
+            if step % (100 * log_steps) == 0 {
                 let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
                 if let Err(e) = save_simulation_state_csv(
                     &format!("terrain{tag}.csv", tag = tag),
@@ -805,7 +800,7 @@ fn simulate_erosion(
             current_sea_level + tidal_adjustment,
             seasonal_rain_multiplier,
         );
-        current_sea_level = BASE_SEA_LEVEL + 0.02 * YEARS_PER_STEP * (step + 22170000 * 9) as f32;
+        current_sea_level = BASE_SEA_LEVEL + 0.02 * year;
     }
 
     download_hex_data(&gpu_sim, hex_map);
@@ -1277,12 +1272,11 @@ fn render_rainfall(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], max_rainfall: f3
         }
     }
 
-    // Divide by RAINFALL_FACTOR to show human-readable values (annual inches equivalent)
     println!(
-        "Rainfall stats (÷RAINFALL_FACTOR): min={:.2}, max={:.2}, expected_max={:.2}",
-        actual_min / RAINFALL_FACTOR,
-        actual_max / RAINFALL_FACTOR,
-        max_rainfall / RAINFALL_FACTOR
+        "Rainfall stats: min={:.2}, max={:.2}, expected_max={:.2}",
+        actual_min,
+        actual_max,
+        max_rainfall
     );
 }
 
@@ -1408,7 +1402,7 @@ fn get_land_deviation(simplex: &Simplex, x: f64, y: f64, period: f64) -> i16 {
         as i16
 }
 
-fn get_rainfall(y: usize, distance_from_coast: f32, distance_from_basins: f32) -> f32 {
+fn get_rainfall_inches(y: usize, distance_from_coast: f32, distance_from_basins: f32) -> f32 {
     let mut result = 0.0;
     let latitude = 25.0 + (y as f32 / 2.0 / ONE_DEGREE_LATITUDE_MILES);
     if latitude < 29.0 {
@@ -1715,18 +1709,15 @@ fn main() {
 
                 let mut rainfall = 0.0;
                 if x < BASIN_X_BOUNDARY {
-                    rainfall = get_rainfall(y, distance_from_coast, distance_from_basins);
+                    rainfall = get_rainfall_inches(y, distance_from_coast, distance_from_basins) / 12.0;
                 }
 
                 if x > BASIN_X_BOUNDARY {
                     if y < NE_BASIN_HEIGHT {
-                        // This creates a one-hex boundary of no rain.
-                        if x > BASIN_X_BOUNDARY {
-                            rainfall = NE_BASIN_RAIN;
-                        }
                         if x > BASIN_X_BOUNDARY + NE_BASIN_FRINGE {
                             // TODO: I don't remember why this is 1.01, probably refactoring would make it clearer.
                             elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
+                            rainfall = NE_BASIN_RAIN;
                         }
                     } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
                         elevation = NORTH_DESERT_MAX_ELEVATION * 1.02;
@@ -1756,7 +1747,7 @@ fn main() {
                 if elevation > 0.0 {
                     // TODO: Two things we want to compensate for here: sea level rise and erosion due to rainfall.
                     // Going to test just doing the first thing, see how much I need for second thing.
-                    uplift = (0.02 * YEARS_PER_STEP + RAIN_BASED_UPLIFT_FACTOR * rainfall)
+                    uplift = (0.02 + RAIN_BASED_UPLIFT_FACTOR * rainfall)
                         * elevation
                         / local_max;
                 }
@@ -1773,7 +1764,7 @@ fn main() {
                     elevation,
                     water_depth: 0.0,
                     suspended_load: 0.0,
-                    rainfall: rainfall * RAINFALL_FACTOR,
+                    rainfall,
                     // TODO: Fiddle with range, seems to help with coastlines and mountains but may make chanelization worse.
                     erosion_multiplier: 0.90
                         + get_simplex_noise_for_hex(

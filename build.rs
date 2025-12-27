@@ -26,8 +26,8 @@ fn main() {
     let kd = eval_f32(&constants, "KD");
     let max_slope = eval_f32(&constants, "MAX_SLOPE");
     let max_elevation = eval_f32(&constants, "MAX_ELEVATION");
-    let evaporation_factor = eval_f32(&constants, "EVAPORATION_FACTOR");
-    let max_evaporation_per_step = eval_f32(&constants, "MAX_EVAPORATION_PER_STEP");
+    let years_per_step = eval_f32(&constants, "YEARS_PER_STEP");
+    let max_evaporation_per_year = eval_f32(&constants, "MAX_EVAPORATION_PER_YEAR");
     let abyssal_depth = eval_f32(&constants, "ABYSSAL_PLAINS_MAX_DEPTH");
     let ne_basin_min_elevation = eval_f32(&constants, "NE_BASIN_MIN_ELEVATION");
 
@@ -56,8 +56,8 @@ const KD: f32 = {kd};
 const MAX_SLOPE: f32 = {max_slope};
 const MAX_ELEVATION: f32 = {max_elevation};
 
-const EVAPORATION_FACTOR: f32 = {evaporation_factor};
-const MAX_EVAPORATION_PER_STEP: f32 = {max_evaporation_per_step};
+const YEARS_PER_STEP: f32 = {years_per_step};
+const MAX_EVAPORATION_PER_YEAR: f32 = {max_evaporation_per_year};
 const BASIN_X_BOUNDARY: f32 = {basin_x_boundary}.0;
 const BASIN_Y_BOUNDARY: f32 = {basin_y_boundary}.0;
 const NE_BASIN_MIN_ELEVATION: f32 = {ne_basin_min_elevation};
@@ -73,8 +73,8 @@ const ABYSSAL_PLAINS_MAX_DEPTH: f32 = {abyssal_depth};
         kd = fmt_float(kd),
         max_slope = fmt_float(max_slope),
         max_elevation = fmt_float(max_elevation),
-        evaporation_factor = fmt_float(evaporation_factor),
-        max_evaporation_per_step = fmt_float(max_evaporation_per_step),
+        years_per_step = fmt_float(years_per_step),
+        max_evaporation_per_year = fmt_float(max_evaporation_per_year),
         ne_basin_min_elevation = fmt_float(ne_basin_min_elevation),
         abyssal_depth = fmt_float(abyssal_depth),
     );

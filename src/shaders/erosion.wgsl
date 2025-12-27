@@ -82,7 +82,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if x > i32(BASIN_X_BOUNDARY) && y < i32(BASIN_Y_BOUNDARY) && cell.elevation < NE_BASIN_MIN_ELEVATION {
         cell.elevation = NE_BASIN_MIN_ELEVATION + params.sea_level;
     }
-    cell.elevation_residual += cell.uplift;
+    cell.elevation_residual += cell.uplift * YEARS_PER_STEP;
 
     hex_data[index] = cell;
     erosion_log[index] = log_entry;

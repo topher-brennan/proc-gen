@@ -11,16 +11,11 @@ pub const HEIGHT_PIXELS: usize = 2160;
 pub const WIDTH_PIXELS: usize = 3840;
 pub const WIDTH_HEXAGONS: usize = (WIDTH_PIXELS as f32 / HEX_FACTOR) as usize;
 
-pub const NE_BASIN_RAIN: f32 = 30.0;
 pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 24.0 * 60.0;
+pub const STEPS_PER_DAY: f32 = 24.0 * 6.0;
 pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
-pub const RAINFALL_FACTOR: f32 = YEARS_PER_STEP / 12.0;
-// Some dubiously realistic back-of-the-envelope math suggested maybe I should use 4/3 and a threshold of 18 feet.
-// Or maybe 2.4 and a threshold of 10 feet?
-pub const EVAPORATION_FACTOR: f32 = YEARS_PER_STEP * 0.2;
-pub const MAX_EVAPORATION_PER_STEP: f32 = 2.0 * YEARS_PER_STEP;
+pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
 
 // Top edge of the map is assumed to be 25 degrees south latitude.
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.0;
@@ -49,6 +44,7 @@ pub const NE_BASIN_FRINGE: usize = 4;
 // An attempt to balance water in north and central regions mathematically.
 // TODO: Maybe fix at 140?
 pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
+pub const NE_BASIN_RAIN: f32 = 515_000.0 / NE_BASIN_HEIGHT as f32 / (NE_BASIN_WIDTH - NE_BASIN_FRINGE - 1) as f32;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
 pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_800.0;
@@ -78,10 +74,8 @@ pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // pits in lakes, not sure where the limit is though.
 pub const KD: f32 = 1.0 / 100.0; // deposition rate fraction
 
-// Used to attempt to compensate for predictable loss of highest peaks over time (~1 foot per 30 years).
-// Disabled as possible source of NaN values.
-pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 1.0 * RAINFALL_FACTOR * KC * KE; // Feet per step
-// pub const RAIN_BASED_UPLIFT_FACTOR: f32 = 0.0;
+// Used to attempt to compensate for predictable loss of highest peaks over time.
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE;
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.

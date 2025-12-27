@@ -45,24 +45,18 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (height_diff > 0.0) {
             covered = clamp(total_water_depth(cell) / height_diff, 0.0, 1.0);
         }
-        water_residual -= MAX_EVAPORATION_PER_STEP * covered / 10.0;
-        // water -= MAX_EVAPORATION_PER_STEP * covered;
-        // water = max(water, 0.0);
+        water_residual -= MAX_EVAPORATION_PER_YEAR * YEARS_PER_STEP * covered;
 
         // Add rainfall to residual
-        // TODO: Reverse seasonal rain in western basins.
-        water_residual += cell.rainfall * params.seasonal_rain_multiplier / 10.0;
+        water_residual += cell.rainfall * params.seasonal_rain_multiplier * YEARS_PER_STEP;
         
-        // Clamp total water to zero if it would go negative
         if (water_residual + water < 0.0) {
             water_residual = 0.0;
             water = 0.0;
         }
-        // water += cell.rainfall * params.seasonal_rain_multiplier;
     } else {
         // Basins don't have evaporation and their seasonal rainfall pattern is reversed.
-        // water += cell.rainfall * (2.0 - params.seasonal_rain_multiplier);
-        water_residual += cell.rainfall / 10.0 * (2.0 - params.seasonal_rain_multiplier);
+        water_residual += cell.rainfall * (2.0 - params.seasonal_rain_multiplier) * YEARS_PER_STEP;
     }
 
     // Floor to 1/512 precision and apply
