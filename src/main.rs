@@ -399,6 +399,7 @@ fn simulate_erosion(
     steps: u32,
     seed: u32,
     starting_step: u32,
+    starting_years: f32,
     initial_max_elevation: f32,
     initial_avg_elevation: f32,
     initial_sea_avg_elevation: f32,
@@ -406,7 +407,7 @@ fn simulate_erosion(
     initial_central_avg: f32,
     initial_south_avg: f32,
     prior_elapsed_secs: f64,
-) -> (f32, f64) {
+) -> (f32, f32, f64) {
     let water_start = Instant::now();
 
     let height = HEIGHT_PIXELS as usize;
@@ -440,10 +441,11 @@ fn simulate_erosion(
     // TODO: Currently dividing by 1000 to compensate for heartbeat not working, really need to fix that.
     let log_steps = round_size as u32 * LOG_ROUNDS / 100;
 
+    let mut years = starting_years;
+
     for step_offset in 0..steps {
         let step = starting_step + step_offset;
-        let year = step as f32 * YEARS_PER_STEP;
-        let seasonal_rain_multiplier = 1.0 + (year * 2.0 * std::f32::consts::PI + std::f32::consts::PI).cos();
+        let seasonal_rain_multiplier = 1.0 + (years * 2.0 * std::f32::consts::PI + std::f32::consts::PI).cos();
 
         if step % log_steps == 0 {
             let gpu_hex_data = gpu_sim.download_hex_data();
@@ -683,8 +685,8 @@ fn simulate_erosion(
                 wet_cells_percentage
             );
             println!(
-                "  sea level: {:.3} ft  seasonal rain multiplier: {:.3}",
-                current_sea_level, seasonal_rain_multiplier
+                "  years: {:.3}  sea level: {:.3} ft  seasonal rain multiplier: {:.3}",
+                years,current_sea_level, seasonal_rain_multiplier
             );
             println!(
                 "  source elevation {:.3} ft  source water depth {:.3} ft  source sediment {:.3} ft",
@@ -774,6 +776,7 @@ fn simulate_erosion(
                     hex_map,
                     seed,
                     step,
+                    years,
                     initial_max_elevation,
                     initial_avg_elevation,
                     initial_sea_avg_elevation,
@@ -800,7 +803,8 @@ fn simulate_erosion(
             current_sea_level + tidal_adjustment,
             seasonal_rain_multiplier,
         );
-        current_sea_level = BASE_SEA_LEVEL + 0.02 * year;
+        current_sea_level = BASE_SEA_LEVEL + 0.02 * years;
+        years += YEARS_PER_STEP;
     }
 
     download_hex_data(&gpu_sim, hex_map);
@@ -889,7 +893,7 @@ fn simulate_erosion(
     );
 
     let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
-    (current_sea_level, total_elapsed_secs)
+    (current_sea_level, years, total_elapsed_secs)
 }
 
 fn print_elevation_and_sediment(gpu_sim: &GpuSimulation, step_label: &str) {
@@ -931,6 +935,7 @@ fn save_simulation_state_csv(
     hex_map: &Vec<Vec<Hex>>,
     seed: u32,
     step: u32,
+    years: f32,
     initial_max_elevation: f32,
     initial_avg_elevation: f32,
     initial_sea_avg_elevation: f32,
@@ -950,6 +955,7 @@ fn save_simulation_state_csv(
         wtr.write_record(&[
             "seed",
             "step",
+            "years",
             "initial_max_elevation",
             "initial_avg_elevation",
             "initial_sea_avg_elevation",
@@ -961,6 +967,7 @@ fn save_simulation_state_csv(
         wtr.write_record(&[
             seed.to_string(),
             step.to_string(),
+            years.to_bits().to_string(),
             initial_max_elevation.to_bits().to_string(),
             initial_avg_elevation.to_bits().to_string(),
             initial_sea_avg_elevation.to_bits().to_string(),
@@ -1019,13 +1026,14 @@ fn save_simulation_state_csv(
 
 fn load_simulation_state_csv(
     path: &str,
-) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, f32, f32, f32, f32, f64) {
+) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, f32, f32, f32, f32, f32, f64) {
     let file = File::open(path).expect("Failed to open CSV file");
     let mut rdr = ReaderBuilder::new().flexible(true).from_reader(file);
 
     let mut hex_map: Vec<Vec<Hex>> = Vec::new();
     let mut seed = 0u32;
     let mut step = 0u32;
+    let mut years = 0.0f32;
     let mut initial_max_elevation = 0.0f32;
     let mut initial_avg_elevation = 0.0f32;
     let mut initial_sea_avg_elevation = 0.0f32;
@@ -1039,49 +1047,66 @@ fn load_simulation_state_csv(
         let record = result.expect("Failed to read CSV record");
         row_index += 1;
 
-        // Row 1: metadata values (seed, step, initial elevations, elapsed_secs) - header was consumed by Reader
+        // Row 1: metadata values (seed, step, years, initial elevations, elapsed_secs) - header was consumed by Reader
         if row_index == 1 {
             seed = record[0].parse().expect("Failed to parse seed");
             step = record[1].parse().expect("Failed to parse step");
-            // Handle backward compatibility - older saves may not have these fields
+            // Handle backward compatibility - older saves may not have years field
+            // Check if record[2] looks like years (new format) or initial_max_elevation (old format)
+            // Years values are typically small (< 1000), while initial_max_elevation bits are large u32 values
+            let mut field_offset = 0;
             if record.len() > 2 {
-                let initial_max_bits: u32 = record[2]
+                let val: u32 = record[2].parse().expect("Failed to parse field 2");
+                // If the value is small enough to be a reasonable years value when interpreted as f32 bits,
+                // it's the new format. Old format had initial_max_elevation bits which are large numbers.
+                let as_f32 = f32::from_bits(val);
+                if as_f32 >= 0.0 && as_f32 < 100_000.0 {
+                    // New format with years field
+                    years = as_f32;
+                    field_offset = 1;
+                } else {
+                    // Old format without years field - calculate years from step
+                    years = step as f32 * YEARS_PER_STEP;
+                }
+            }
+            if record.len() > 2 + field_offset {
+                let initial_max_bits: u32 = record[2 + field_offset]
                     .parse()
                     .expect("Failed to parse initial_max_elevation bits");
                 initial_max_elevation = f32::from_bits(initial_max_bits);
             }
-            if record.len() > 3 {
-                let initial_avg_bits: u32 = record[3]
+            if record.len() > 3 + field_offset {
+                let initial_avg_bits: u32 = record[3 + field_offset]
                     .parse()
                     .expect("Failed to parse initial_avg_elevation bits");
                 initial_avg_elevation = f32::from_bits(initial_avg_bits);
             }
-            if record.len() > 4 {
-                let initial_sea_avg_bits: u32 = record[4]
+            if record.len() > 4 + field_offset {
+                let initial_sea_avg_bits: u32 = record[4 + field_offset]
                     .parse()
                     .expect("Failed to parse initial_sea_avg_elevation bits");
                 initial_sea_avg_elevation = f32::from_bits(initial_sea_avg_bits);
             }
-            if record.len() > 5 {
-                let initial_north_bits: u32 = record[5]
+            if record.len() > 5 + field_offset {
+                let initial_north_bits: u32 = record[5 + field_offset]
                     .parse()
                     .expect("Failed to parse initial_north_avg bits");
                 initial_north_avg = f32::from_bits(initial_north_bits);
             }
-            if record.len() > 6 {
-                let initial_central_bits: u32 = record[6]
+            if record.len() > 6 + field_offset {
+                let initial_central_bits: u32 = record[6 + field_offset]
                     .parse()
                     .expect("Failed to parse initial_central_avg bits");
                 initial_central_avg = f32::from_bits(initial_central_bits);
             }
-            if record.len() > 7 {
-                let initial_south_bits: u32 = record[7]
+            if record.len() > 7 + field_offset {
+                let initial_south_bits: u32 = record[7 + field_offset]
                     .parse()
                     .expect("Failed to parse initial_south_avg bits");
                 initial_south_avg = f32::from_bits(initial_south_bits);
             }
-            if record.len() > 8 {
-                let elapsed_bits: u64 = record[8]
+            if record.len() > 8 + field_offset {
+                let elapsed_bits: u64 = record[8 + field_offset]
                     .parse()
                     .expect("Failed to parse elapsed_secs bits");
                 elapsed_secs = f64::from_bits(elapsed_bits);
@@ -1149,6 +1174,7 @@ fn load_simulation_state_csv(
         hex_map,
         seed,
         step,
+        years,
         initial_max_elevation,
         initial_avg_elevation,
         initial_sea_avg_elevation,
@@ -1454,6 +1480,7 @@ fn main() {
         mut hex_map,
         seed,
         starting_step,
+        starting_years,
         initial_max_elevation,
         initial_avg_elevation,
         initial_sea_avg_elevation,
@@ -1468,6 +1495,7 @@ fn main() {
             loaded_hex_map,
             loaded_seed,
             loaded_step,
+            loaded_years,
             loaded_initial_max,
             loaded_initial_avg,
             loaded_initial_sea_avg,
@@ -1477,8 +1505,8 @@ fn main() {
             loaded_elapsed_secs,
         ) = load_simulation_state_csv(&resume_path);
         println!(
-                "Loaded seed: {}, starting step: {}, initial max elevation: {:.3}, initial avg elevation: {:.3}, initial sea avg: {:.3}, prior elapsed: {:.1}s",
-                loaded_seed, loaded_step, loaded_initial_max, loaded_initial_avg, loaded_initial_sea_avg, loaded_elapsed_secs
+                "Loaded seed: {}, starting step: {}, years: {:.3}, initial max elevation: {:.3}, initial avg elevation: {:.3}, initial sea avg: {:.3}, prior elapsed: {:.1}s",
+                loaded_seed, loaded_step, loaded_years, loaded_initial_max, loaded_initial_avg, loaded_initial_sea_avg, loaded_elapsed_secs
             );
         println!(
             "  regional initial avgs: north {:.3}, central {:.3}, south {:.3}",
@@ -1493,6 +1521,7 @@ fn main() {
             loaded_hex_map,
             loaded_seed,
             loaded_step,
+            loaded_years,
             loaded_initial_max,
             loaded_initial_avg,
             loaded_initial_sea_avg,
@@ -1954,6 +1983,7 @@ fn main() {
             hex_map,
             seed,
             0,
+            0.0, // starting_years
             initial_max_elevation,
             initial_avg_elevation,
             initial_sea_avg_elevation,
@@ -1965,17 +1995,18 @@ fn main() {
     };
 
     println!("Seed: {}", seed);
-    println!("Starting step: {}", starting_step);
+    println!("Starting step: {}, starting years: {:.3}", starting_step, starting_years);
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 
     let total_steps = (WIDTH_HEXAGONS as u32) * rounds;
     let remaining_steps = total_steps.saturating_sub(starting_step);
-    let (final_sea_level, final_elapsed_secs) = simulate_erosion(
+    let (final_sea_level, final_years, final_elapsed_secs) = simulate_erosion(
         &mut hex_map,
         remaining_steps,
         seed,
         starting_step,
+        starting_years,
         initial_max_elevation,
         initial_avg_elevation,
         initial_sea_avg_elevation,
@@ -2012,6 +2043,7 @@ fn main() {
         &hex_map,
         seed,
         final_step,
+        final_years,
         initial_max_elevation,
         initial_avg_elevation,
         initial_sea_avg_elevation,
@@ -2037,6 +2069,7 @@ fn main() {
         &hex_map,
         seed,
         final_step,
+        final_years,
         initial_max_elevation,
         initial_avg_elevation,
         initial_sea_avg_elevation,

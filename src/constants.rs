@@ -12,7 +12,7 @@ pub const WIDTH_PIXELS: usize = 3840;
 pub const WIDTH_HEXAGONS: usize = (WIDTH_PIXELS as f32 / HEX_FACTOR) as usize;
 
 pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 24.0 * 6.0;
+pub const STEPS_PER_DAY: f32 = 7.0;
 pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
@@ -54,7 +54,7 @@ pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
 pub const BASIN_X_BOUNDARY: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
 // TODO: Fix this—it's putting the river source outside the basin proper.
-pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + 1;
+pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + NE_BASIN_FRINGE / 2;
 pub const SEA_LEVEL: f32 = 0.0;
 pub const BASE_SEA_LEVEL: f32 = SEA_LEVEL;
 
@@ -65,14 +65,14 @@ pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 16_900.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 11_200.0;
 pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
-pub const NE_BASIN_MIN_ELEVATION: f32 = BOUNDARY_ELEVATION;
+pub const NE_BASIN_MIN_ELEVATION: f32 = 800.0;
 
-pub const KC: f32 = 1.5; // capacity coefficient
+pub const KC: f32 = 0.016; // capacity coefficient
 pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
                                // Experimentally, a KD of 0.01 results in even filling of large lakes.
                                // Too high a value may result in water sloshing back and forth drilling
                                // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 1.0 / 100.0; // deposition rate fraction
+pub const KD: f32 = 1.0 / 1000.0; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
 pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE;

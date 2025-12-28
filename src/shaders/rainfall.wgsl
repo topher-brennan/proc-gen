@@ -43,7 +43,7 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let height_diff = max((height(cell) - min_elev[index]), 0.0);
         var covered = 1.0;
         if (height_diff > 0.0) {
-            covered = clamp(total_water_depth(cell) / height_diff, 0.0, 1.0);
+            covered = clamp(total_water_depth(cell) / height_diff / 20.0, 0.0, 1.0);
         }
         water_residual -= MAX_EVAPORATION_PER_YEAR * YEARS_PER_STEP * covered;
 
