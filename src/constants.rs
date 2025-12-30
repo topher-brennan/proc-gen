@@ -44,11 +44,12 @@ pub const NE_BASIN_FRINGE: usize = 4;
 // An attempt to balance water in north and central regions mathematically.
 // TODO: Maybe fix at 140?
 pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
-pub const NE_BASIN_RAIN: f32 = 515_000.0 / NE_BASIN_HEIGHT as f32 / (NE_BASIN_WIDTH - NE_BASIN_FRINGE - 1) as f32;
+pub const NE_BASIN_RAIN: f32 =
+    515_000.0 / NE_BASIN_HEIGHT as f32 / (NE_BASIN_WIDTH - NE_BASIN_FRINGE - 1) as f32;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
 pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_800.0;
-pub const LAKE_MIN_ELEVATION: f32 = -1_900.0;
+pub const LAKE_MIN_ELEVATION: f32 = 0.0;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
 pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
@@ -67,12 +68,12 @@ pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
 pub const NE_BASIN_MIN_ELEVATION: f32 = 800.0;
 
-pub const KC: f32 = 0.016; // capacity coefficient
-pub const KE: f32 = 1.0 / 7.0; // erosion rate fraction
-                               // Experimentally, a KD of 0.01 results in even filling of large lakes.
-                               // Too high a value may result in water sloshing back and forth drilling
-                               // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 1.0 / 1000.0; // deposition rate fraction
+pub const KC: f32 = 0.1; // capacity coefficient
+pub const KE: f32 = 0.1; // erosion rate fraction
+                         // Experimentally, a KD of 0.01 results in even filling of large lakes.
+                         // Too high a value may result in water sloshing back and forth drilling
+                         // pits in lakes, not sure where the limit is though.
+pub const KD: f32 = 0.01; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
 pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE;

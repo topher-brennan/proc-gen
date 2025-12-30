@@ -445,7 +445,8 @@ fn simulate_erosion(
 
     for step_offset in 0..steps {
         let step = starting_step + step_offset;
-        let seasonal_rain_multiplier = 1.0 + (years * 2.0 * std::f32::consts::PI + std::f32::consts::PI).cos();
+        let seasonal_rain_multiplier =
+            1.0 + (years * 2.0 * std::f32::consts::PI + std::f32::consts::PI).cos();
 
         if step % log_steps == 0 {
             let gpu_hex_data = gpu_sim.download_hex_data();
@@ -686,7 +687,7 @@ fn simulate_erosion(
             );
             println!(
                 "  years: {:.3}  sea level: {:.3} ft  seasonal rain multiplier: {:.3}",
-                years,current_sea_level, seasonal_rain_multiplier
+                years, current_sea_level, seasonal_rain_multiplier
             );
             println!(
                 "  source elevation {:.3} ft  source water depth {:.3} ft  source sediment {:.3} ft",
@@ -909,9 +910,14 @@ fn print_elevation_and_sediment(gpu_sim: &GpuSimulation, step_label: &str) {
     );
 }
 
-fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+fn save_buffer_png(
+    path: &str,
+    buffer: &[u32],
+    width: u32,
+    height: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let temp_path = format!("{}.tmp", path);
-    
+
     // Write to temporary file first
     let mut img: RgbImage = RgbImage::new(width, height);
     for (idx, pixel) in buffer.iter().enumerate() {
@@ -924,7 +930,7 @@ fn save_buffer_png(path: &str, buffer: &[u32], width: u32, height: u32) -> Resul
     }
     // Explicitly specify PNG format since temp file has .tmp extension
     img.save_with_format(&temp_path, image::ImageFormat::Png)?;
-    
+
     // Atomically rename temp file to final path
     std::fs::rename(&temp_path, path)?;
     Ok(())
@@ -945,7 +951,7 @@ fn save_simulation_state_csv(
     elapsed_secs: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let temp_path = format!("{}.tmp", path);
-    
+
     // Write to temporary file first (in a block to ensure file is closed before rename)
     {
         let file = File::create(&temp_path)?;
@@ -1018,7 +1024,7 @@ fn save_simulation_state_csv(
 
         wtr.flush()?;
     } // File is closed here when wtr goes out of scope
-    
+
     // Atomically rename temp file to final path
     std::fs::rename(&temp_path, path)?;
     Ok(())
@@ -1026,7 +1032,19 @@ fn save_simulation_state_csv(
 
 fn load_simulation_state_csv(
     path: &str,
-) -> (Vec<Vec<Hex>>, u32, u32, f32, f32, f32, f32, f32, f32, f32, f64) {
+) -> (
+    Vec<Vec<Hex>>,
+    u32,
+    u32,
+    f32,
+    f32,
+    f32,
+    f32,
+    f32,
+    f32,
+    f32,
+    f64,
+) {
     let file = File::open(path).expect("Failed to open CSV file");
     let mut rdr = ReaderBuilder::new().flexible(true).from_reader(file);
 
@@ -1185,9 +1203,13 @@ fn load_simulation_state_csv(
     )
 }
 
-fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) -> Result<(), Box<dyn std::error::Error>> {
+fn save_png(
+    path: &str,
+    hex_map: &Vec<Vec<Hex>>,
+    sea_level: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let temp_path = format!("{}.tmp", path);
-    
+
     let mut img = ImageBuffer::new(WIDTH_PIXELS as u32, HEIGHT_PIXELS as u32);
 
     // For each pixel, find the nearest hex and use its elevation
@@ -1215,7 +1237,7 @@ fn save_png(path: &str, hex_map: &Vec<Vec<Hex>>, sea_level: f32) -> Result<(), B
 
     // Explicitly specify PNG format since temp file has .tmp extension
     img.save_with_format(&temp_path, image::ImageFormat::Png)?;
-    
+
     // Atomically rename temp file to final path
     std::fs::rename(&temp_path, path)?;
     Ok(())
@@ -1300,9 +1322,7 @@ fn render_rainfall(hex_map: &Vec<Vec<Hex>>, buffer: &mut [u32], max_rainfall: f3
 
     println!(
         "Rainfall stats: min={:.2}, max={:.2}, expected_max={:.2}",
-        actual_min,
-        actual_max,
-        max_rainfall
+        actual_min, actual_max, max_rainfall
     );
 }
 
@@ -1441,7 +1461,8 @@ fn get_rainfall_inches(y: usize, distance_from_coast: f32, distance_from_basins:
 
     result = result.clamp(0.0, 20.0);
 
-    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast.min(distance_from_basins)) / (144.0 / HEX_FACTOR as f32))
+    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast.min(distance_from_basins))
+        / (144.0 / HEX_FACTOR as f32))
         .clamp(0.0, 1.0);
     result *= 1.0 + factor * 2.0;
     result
@@ -1590,8 +1611,7 @@ fn main() {
 
                 let diagonally_deviated_y = deviated_y.min(
                     deviated_y
-                        - (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH))
-                            / MAIN_RIVER_WIDTH,
+                        - (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH)) / MAIN_RIVER_WIDTH,
                 );
 
                 let simplex_noise = noise_map[y][x];
@@ -1625,6 +1645,7 @@ fn main() {
                     let mut max_inland_elevation = 0.0;
 
                     if diagonally_deviated_y < NORTH_DESERT_HEIGHT {
+                        let mut edges_factor = 0.0;
                         // TODO: If/else is here because abs() didn't seem to work correctly, need to investigate.
                         let mut factor1: f32 = 0.0;
                         if deviated_x < TOTAL_SEA_WIDTH {
@@ -1636,6 +1657,7 @@ fn main() {
                                 / TRANSITION_PERIOD as f32)
                                 .clamp(0.0, 1.0);
                         }
+                        edges_factor = factor1;
                         factor1 = factor1
                             .min(deviated_y as f32 / RIVER_Y as f32)
                             .clamp(0.0, 1.0);
@@ -1653,12 +1675,8 @@ fn main() {
                         // Area is oval-shaped, not circular, with the longer axis running east-west.
                         // I keep fiddling with the ratio of the longer axis to the shorter axis, for awhile I'd settled on 2:1 but
                         // seem to be having trouble making up my mind.
-                        let factor2 = (cartesian_distance(
-                            0.0,
-                            cy1,
-                            (cx2 - cx1) / 2.0,
-                            cy2,
-                        ) / (TRANSITION_PERIOD as f32))
+                        let factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2)
+                            / (TRANSITION_PERIOD as f32))
                             .min(1.0);
 
                         let factor3 = (y as f32 / NORTH_DESERT_HEIGHT as f32).clamp(0.0, 1.0);
@@ -1672,6 +1690,9 @@ fn main() {
                             NORTH_DESERT_MAX_ELEVATION,
                         ) * factor2
                             + (1.0 - factor2) * OUTLET_ELEVATION;
+
+
+                            
                     } else if deviated_y < NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                         let factor1 = ((diagonally_deviated_y - NORTH_DESERT_HEIGHT) as f32
                             / TRANSITION_PERIOD as f32)
@@ -1690,20 +1711,32 @@ fn main() {
                         let factor0 = ((diagonally_deviated_y - NORTH_DESERT_HEIGHT) as f32
                             / TRANSITION_PERIOD as f32)
                             .min(1.0);
-                        let max0 = (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor0
-                        + NORTH_DESERT_MAX_ELEVATION;
+                        let max0 = (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION)
+                            * factor0
+                            + NORTH_DESERT_MAX_ELEVATION;
 
                         let factor = ((deviated_y - NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT)
                             as f32
                             / TRANSITION_PERIOD as f32)
                             .min(1.0);
-                        min_inland_elevation = (LAKE_MIN_ELEVATION - BOUNDARY_ELEVATION)
-                            * get_boundary_factor(factor)
-                            + BOUNDARY_ELEVATION;
-                        max_inland_elevation = (SOUTH_MOUNTAINS_MAX_ELEVATION
-                            - max0)
-                            * factor
-                            + max0;
+                        min_inland_elevation = pick_value_from_range(
+                            1.0 - factor,
+                            LAKE_MIN_ELEVATION,
+                            BOUNDARY_ELEVATION,
+                        );
+                        max_inland_elevation =
+                            pick_value_from_range(factor, max0, SOUTH_MOUNTAINS_MAX_ELEVATION);
+
+                        if max_inland_elevation > BOUNDARY_ELEVATION {
+                            let far_south_factor = ((y as f32 - 15.0 * ONE_DEGREE_LATITUDE_MILES)
+                                / TRANSITION_PERIOD as f32)
+                                .clamp(0.0, 1.0);
+                            max_inland_elevation = pick_value_from_range(
+                                far_south_factor,
+                                BOUNDARY_ELEVATION,
+                                max_inland_elevation,
+                            );
+                        }
                     }
 
                     let min_elevation =
@@ -1714,46 +1747,29 @@ fn main() {
                     elevation = pick_value_from_range(simplex_noise, min_elevation, local_max);
                 }
 
-                if x > BASIN_X_BOUNDARY
-                    && y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE
-                {
-                    // The northeast basin.
-                    // TODO: Refactor this so I'm not doing the goofy thing in the rainfall step.
-                    elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
-                    // This specifically doesn't include y-deviation so the river source is exactly where we want it to be.
-                    if distance_from_source_y != 0 {
-                        let factor = ((distance_from_source_y) as f32
-                            / (NORTH_DESERT_HEIGHT as f32 - SOURCE_Y as f32))
-                            .min(1.0);
-                        elevation += (NORTH_DESERT_MAX_ELEVATION * 0.01) * factor;
-                        elevation -= (x - BASIN_X_BOUNDARY) as f32;
-                    }
-                }
-
-                // TODO: Not sure I like this, the idea was with variable erosion this wouldn't be necessary.
-                if x <= BASIN_X_BOUNDARY as usize {
-                    elevation +=
-                        get_white_noise(seed, x, y) * 0.01 * elevation.max(HEX_SIZE as f32);
-                }
-
                 let mut rainfall = 0.0;
                 if x < BASIN_X_BOUNDARY {
-                    rainfall = get_rainfall_inches(y, distance_from_coast, distance_from_basins) / 12.0;
+                    rainfall =
+                        get_rainfall_inches(y, distance_from_coast, distance_from_basins) / 12.0;
                 }
 
                 if x > BASIN_X_BOUNDARY {
-                    if y < NE_BASIN_HEIGHT {
-                        if x > BASIN_X_BOUNDARY + NE_BASIN_FRINGE {
-                            // TODO: I don't remember why this is 1.01, probably refactoring would make it clearer.
-                            elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
-                            rainfall = NE_BASIN_RAIN;
-                        }
-                    } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE {
-                        elevation = NORTH_DESERT_MAX_ELEVATION * 1.02;
-                    } else if x > BASIN_X_BOUNDARY {
-                        elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
+                    elevation = NORTH_DESERT_MAX_ELEVATION * 1.01;
+
+                    if x > BASIN_X_BOUNDARY + NE_BASIN_FRINGE && y < NE_BASIN_HEIGHT {
+                        // TODO: 1.01 factor may have been to make absolutely sure this will be above north desert,
+                        // but should it be removed?
+                        rainfall = NE_BASIN_RAIN;
+                    } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE && distance_from_source_y != 0
+                    {
+                        // This specifically doesn't include y-deviation so the river source is exactly where we want it to be.
+                        let factor = ((distance_from_source_y) as f32
+                            / (NORTH_DESERT_HEIGHT as f32 - SOURCE_Y as f32))
+                            .min(1.0);
+                        elevation += HEX_SIZE * factor;
+                    } else {
                         elevation += (x - BASIN_X_BOUNDARY - 1) as f32 * HEX_SIZE;
-                        
+
                         let no_increments: f32 =
                             ((SOUTH_MOUNTAINS_MAX_ELEVATION) / 1000.0).ceil() + 1.0;
                         let boundary = NE_BASIN_HEIGHT + NE_BASIN_FRINGE;
@@ -1763,8 +1779,11 @@ fn main() {
                                 .floor()
                                 / no_increments)
                             .clamp(0.0, 1.0);
-                        elevation =
-                            elevation.min(pick_value_from_range(factor, 0.0, SOUTH_MOUNTAINS_MAX_ELEVATION));
+                        elevation = elevation.min(pick_value_from_range(
+                            factor,
+                            0.0,
+                            SOUTH_MOUNTAINS_MAX_ELEVATION,
+                        ));
                     }
                 }
 
@@ -1774,11 +1793,10 @@ fn main() {
                 }
 
                 if elevation > 0.0 {
-                    // TODO: Two things we want to compensate for here: sea level rise and erosion due to rainfall.
-                    // Going to test just doing the first thing, see how much I need for second thing.
                     uplift = (0.02 + RAIN_BASED_UPLIFT_FACTOR * rainfall)
-                        * elevation
-                        / local_max;
+                        * (elevation / local_max * FAR_NORTH_DESERT_MAX_ELEVATION
+                            / BOUNDARY_ELEVATION)
+                            .clamp(0.0, 1.0);
                 }
 
                 if uplift.is_nan() {
@@ -1995,7 +2013,10 @@ fn main() {
     };
 
     println!("Seed: {}", seed);
-    println!("Starting step: {}, starting years: {:.3}", starting_step, starting_years);
+    println!(
+        "Starting step: {}, starting years: {:.3}",
+        starting_step, starting_years
+    );
 
     let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
 

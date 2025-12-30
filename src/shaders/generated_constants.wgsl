@@ -9,9 +9,9 @@ const HEX_FACTOR: f32 = 0.8660254;
 const FLOW_FACTOR: f32 = 0.9;
 const MAX_FLOW: f32 = 2640.0;
 
-const KC: f32 = 0.016;
-const KE: f32 = 0.14285715;
-const KD: f32 = 0.001;
+const KC: f32 = 0.1;
+const KE: f32 = 0.1;
+const KD: f32 = 0.01;
 const MAX_SLOPE: f32 = 1.0;
 const MAX_ELEVATION: f32 = 16900.0;
 
