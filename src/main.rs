@@ -1609,12 +1609,12 @@ fn main() {
                 let sea_width_for_river_y =
                     TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
 
-                // TODO: Resaon this looks so dumb is to work around unsigned integer underflow,
-                // but there's gotta be a better way to do this.
-                let desert_height_adjustment = 0.min(0 -
-                    (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH)) / MAIN_RIVER_WIDTH,
+                // TODO: Simplify once I'm sure everything else is right.
+                let diagonally_deviated_y = deviated_y.min(
+                    deviated_y
+                        - (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH)) / MAIN_RIVER_WIDTH,
                 );
-                let local_north_desert_height = MIN_NORTH_DESERT_HEIGHT - desert_height_adjustment;
+                let local_north_desert_height = MIN_NORTH_DESERT_HEIGHT + deviated_y - diagonally_deviated_y;
 
                 let simplex_noise = noise_map[y][x];
                 let mut abyssal_plains_depth_adjustment = 0.9;
