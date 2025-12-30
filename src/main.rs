@@ -1609,10 +1609,12 @@ fn main() {
                 let sea_width_for_river_y =
                     TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
 
+                // TODO: Simplify once I'm sure everything else is right.
                 let diagonally_deviated_y = deviated_y.min(
                     deviated_y
                         - (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH)) / MAIN_RIVER_WIDTH,
                 );
+                let local_north_desert_height = MIN_NORTH_DESERT_HEIGHT + deviated_y - diagonally_deviated_y;
 
                 let simplex_noise = noise_map[y][x];
                 let mut abyssal_plains_depth_adjustment = 0.9;
@@ -1644,7 +1646,7 @@ fn main() {
                     let mut min_inland_elevation = 0.0;
                     let mut max_inland_elevation = 0.0;
 
-                    if diagonally_deviated_y < MIN_NORTH_DESERT_HEIGHT {
+                    if deviated_y < local_north_desert_height {
                         let mut edges_factor = 0.0;
                         // TODO: If/else is here because abs() didn't seem to work correctly, need to investigate.
                         let mut factor1: f32 = 0.0;
@@ -1662,7 +1664,7 @@ fn main() {
                             .min(deviated_y as f32 / RIVER_Y as f32)
                             .clamp(0.0, 1.0);
                         factor1 = factor1.min(
-                            (MIN_NORTH_DESERT_HEIGHT - diagonally_deviated_y) as f32
+                            (local_north_desert_height - deviated_y) as f32
                                 / TRANSITION_PERIOD as f32,
                         );
                         factor1 = get_boundary_factor(factor1);
@@ -1711,7 +1713,7 @@ fn main() {
                         //     );
                         // }
                     } else if deviated_y < MIN_NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
-                        let factor1 = ((diagonally_deviated_y - MIN_NORTH_DESERT_HEIGHT) as f32
+                        let factor1 = ((deviated_y - local_north_desert_height) as f32
                             / TRANSITION_PERIOD as f32)
                             .min(1.0);
                         let factor2 = ((MIN_NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT
@@ -1725,7 +1727,7 @@ fn main() {
                             (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor1
                                 + NORTH_DESERT_MAX_ELEVATION;
                     } else {
-                        let factor0 = ((diagonally_deviated_y - MIN_NORTH_DESERT_HEIGHT) as f32
+                        let factor0 = ((deviated_y - local_north_desert_height) as f32
                             / TRANSITION_PERIOD as f32)
                             .min(1.0);
                         let max0 = (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION)
