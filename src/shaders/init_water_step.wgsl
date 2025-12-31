@@ -4,13 +4,14 @@
 
 struct Hex {
     elevation: f32,
-    water_depth: f32,
-    suspended_load: f32,
-    rainfall: f32,
     elevation_residual: f32,
+    water_depth: f32,
+    water_depth_residual: f32,
+    suspended_load: f32,
+    suspended_load_residual: f32,
+    rainfall: f32,
     erosion_multiplier: f32,
     uplift: f32,
-    water_depth_residual: f32,
 }
 
 @group(0) @binding(0)
@@ -25,6 +26,9 @@ var<storage, read_write> next_load: array<atomic<i32>>;
 @group(0) @binding(3)
 var<storage, read_write> next_water_residual: array<atomic<i32>>;
 
+@group(0) @binding(4)
+var<storage, read_write> next_load_residual: array<atomic<i32>>;
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
@@ -36,5 +40,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     atomicStore(&next_water[index], bitcast<i32>(hex_data[index].water_depth));
     atomicStore(&next_load[index], bitcast<i32>(hex_data[index].suspended_load));
     atomicStore(&next_water_residual[index], bitcast<i32>(hex_data[index].water_depth_residual));
+    atomicStore(&next_load_residual[index], bitcast<i32>(hex_data[index].suspended_load_residual));
 }
 

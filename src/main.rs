@@ -182,6 +182,7 @@ fn upload_hex_data(hex_map: &Vec<Vec<Hex>>, gpu_sim: &GpuSimulation) {
                 erosion_multiplier: h.erosion_multiplier,
                 uplift: h.uplift,
                 residual_water_depth: 0.0,
+                residual_suspended_load: 0.0,
             });
         }
     }
@@ -198,7 +199,7 @@ fn download_hex_data(gpu_sim: &GpuSimulation, hex_map: &mut Vec<Vec<Hex>>) {
         let cell = &mut hex_map[y][x];
         cell.elevation = h.elevation + h.residual_elevation;
         cell.water_depth = h.water_depth + h.residual_water_depth;
-        cell.suspended_load = h.suspended_load;
+        cell.suspended_load = h.suspended_load + h.residual_suspended_load;
         cell.erosion_multiplier = h.erosion_multiplier;
         cell.uplift = h.uplift;
     }
@@ -630,22 +631,31 @@ fn simulate_erosion(
                 0.0
             };
 
-            // Calculate sea hex average elevation
+            // Calculate sea hex stats (elevation above sea level)
             // Sea hexes: x <= BASIN_X_BOUNDARY, not continental, elevation < sea level
-            let (sea_total, sea_count): (f64, usize) = {
+            let (sea_total, sea_count, min_sea_elevation, max_sea_elevation): (f64, usize, f32, f32) = {
                 let mut sum = 0.0f64;
                 let mut count = 0usize;
+                let mut min_elev = f32::INFINITY;
+                let mut max_elev = f32::NEG_INFINITY;
                 let sea_boundary_x = BASIN_X_BOUNDARY;
 
                 for y in 0..HEIGHT_PIXELS {
                     for x in 0..=sea_boundary_x {
                         if !continental[y][x] && hex_map[y][x].elevation < current_sea_level {
-                            sum += hex_map[y][x].elevation as f64;
+                            let elev = hex_map[y][x].elevation;
+                            sum += elev as f64;
                             count += 1;
+                            if elev < min_elev {
+                                min_elev = elev;
+                            }
+                            if elev > max_elev {
+                                max_elev = elev;
+                            }
                         }
                     }
                 }
-                (sum, count)
+                (sum, count, min_elev, max_elev)
             };
 
             let sea_avg_elevation = if sea_count > 0 {
@@ -710,13 +720,14 @@ fn simulate_erosion(
                 total_land, net_land, total_sediment
             );
             println!(
-                "  max elevation: {:.3} ft (initial: {:.3} ft, {:.1}%)  avg elevation: {:.3} ft (initial: {:.3} ft, {:.1}%)",
+                "  land: max {:.3} ft ({:.3}, {:.1}%)  avg {:.3} ft ({:.3}, {:.1}%)  min {:.3} ft",
                 max_elevation - current_sea_level,
                 initial_max_elevation,
                 (max_elevation - current_sea_level) / initial_max_elevation * 100.0,
                 avg_elevation,
                 initial_avg_elevation,
                 avg_elevation / initial_avg_elevation * 100.0,
+                min_elevation - current_sea_level,
             );
             println!(
                 "  regional avg: north {:.1} ft ({:.1}%)  central {:.1} ft ({:.1}%)  south {:.1} ft ({:.1}%)",
@@ -725,11 +736,12 @@ fn simulate_erosion(
                 south_avg, south_avg / initial_south_avg * 100.0,
             );
             println!(
-                "  min elevation: {:.3} ft  sea avg: {:.3} ft (initial: {:.3} ft, {:.1}%)  time: {:?}",
-                min_elevation - current_sea_level,
+                "  sea:  max {:.3} ft  avg {:.3} ft ({:.3}, {:.1}%)  min {:.3} ft  time: {:?}",
+                max_sea_elevation - current_sea_level,
                 sea_avg_elevation,
                 initial_sea_avg_elevation,
                 sea_avg_elevation / initial_sea_avg_elevation * 100.0,
+                min_sea_elevation - current_sea_level,
                 total_elapsed,
             );
 
@@ -1793,14 +1805,13 @@ fn main() {
                         // TODO: 1.01 factor may have been to make absolutely sure this will be above north desert,
                         // but should it be removed?
                         rainfall = NE_BASIN_RAIN;
-                    } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE && distance_from_source_y != 0
-                    {
+                    } else if y <= NE_BASIN_HEIGHT + NE_BASIN_FRINGE && distance_from_source_y != 0 {
                         // This specifically doesn't include y-deviation so the river source is exactly where we want it to be.
                         let factor = ((distance_from_source_y) as f32
                             / (MIN_NORTH_DESERT_HEIGHT as f32 - SOURCE_Y as f32))
                             .min(1.0);
                         elevation += HEX_SIZE * factor;
-                    } else {
+                    } else if distance_from_source_y != 0 {
                         elevation += (x - BASIN_X_BOUNDARY - 1) as f32 * HEX_SIZE;
 
                         let no_increments: f32 =

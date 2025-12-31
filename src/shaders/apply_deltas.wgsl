@@ -2,13 +2,14 @@
 
 struct Hex {
     elevation: f32,
-    water_depth: f32,
-    suspended_load: f32,
-    rainfall: f32,
     elevation_residual: f32,
+    water_depth: f32,
+    water_depth_residual: f32,
+    suspended_load: f32,
+    suspended_load_residual: f32,
+    rainfall: f32,
     erosion_multiplier: f32,
     uplift: f32,
-    water_depth_residual: f32,
 };
 
 @group(0) @binding(0)

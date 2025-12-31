@@ -2,13 +2,14 @@
 
 struct Hex {
     elevation: f32,
-    water_depth: f32,
-    suspended_load: f32,
-    rainfall: f32,
     elevation_residual: f32,
+    water_depth: f32,
+    water_depth_residual: f32,
+    suspended_load: f32,
+    suspended_load_residual: f32,
+    rainfall: f32,
     erosion_multiplier: f32,
     uplift: f32,
-    water_depth_residual: f32,
 }
 
 @group(0) @binding(0)
@@ -22,6 +23,9 @@ var<storage, read_write> next_load: array<atomic<i32>>;
 
 @group(0) @binding(3)
 var<storage, read_write> next_water_residual: array<atomic<i32>>;
+
+@group(0) @binding(4)
+var<storage, read_write> next_load_residual: array<atomic<i32>>;
 
 const NO_TARGET: u32 = 0xFFFFFFFFu;
 
@@ -143,13 +147,19 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if (move_f > 0.0) {
             var water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
-            var residual_outflow = 0.0;
-            let load_outflow = sediment_fraction(hex) * move_f;
+            var residual_water_outflow = 0.0;
+            var load_outflow = sediment_fraction(hex) * move_f;
+            var residual_load_outflow = 0.0;
             
             // Residual moves proportionally to how much water moves relative to total water
             if (water_outflow < 1.0 / 512.0) {
-                residual_outflow = water_outflow;
+                residual_water_outflow = water_outflow;
                 water_outflow = 0.0;
+            }
+
+            if (load_outflow < 1.0 / 512.0) {
+                residual_load_outflow = load_outflow;
+                load_outflow = 0.0;
             }
 
             // Subtract outflow from our own next buffers (atomic for thread safety)
@@ -177,9 +187,19 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             old_bits = atomicLoad(&next_water_residual[index]);
             loop {
                 let old_f32 = bitcast<f32>(old_bits);
-                let new_f32 = old_f32 - residual_outflow;
+                let new_f32 = old_f32 - residual_water_outflow;
                 let new_bits = bitcast<i32>(new_f32);
                 let result = atomicCompareExchangeWeak(&next_water_residual[index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+
+            old_bits = atomicLoad(&next_load_residual[index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 - residual_load_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_load_residual[index], old_bits, new_bits);
                 if (result.exchanged) { break; }
                 old_bits = result.old_value;
             }
@@ -208,9 +228,19 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             old_bits = atomicLoad(&next_water_residual[target_index]);
             loop {
                 let old_f32 = bitcast<f32>(old_bits);
-                let new_f32 = old_f32 + residual_outflow;
+                let new_f32 = old_f32 + residual_water_outflow;
                 let new_bits = bitcast<i32>(new_f32);
                 let result = atomicCompareExchangeWeak(&next_water_residual[target_index], old_bits, new_bits);
+                if (result.exchanged) { break; }
+                old_bits = result.old_value;
+            }
+
+            old_bits = atomicLoad(&next_load_residual[target_index]);
+            loop {
+                let old_f32 = bitcast<f32>(old_bits);
+                let new_f32 = old_f32 + residual_load_outflow;
+                let new_bits = bitcast<i32>(new_f32);
+                let result = atomicCompareExchangeWeak(&next_load_residual[target_index], old_bits, new_bits);
                 if (result.exchanged) { break; }
                 old_bits = result.old_value;
             }

@@ -4,13 +4,14 @@
 
 struct Hex {
     elevation: f32,
-    water_depth: f32,
-    suspended_load: f32,
-    rainfall: f32,
     elevation_residual: f32,
+    water_depth: f32,
+    water_depth_residual: f32,
+    suspended_load: f32,
+    suspended_load_residual: f32,
+    rainfall: f32,
     erosion_multiplier: f32,
     uplift: f32,
-    water_depth_residual: f32,
 };
 
 struct Log {
@@ -39,24 +40,30 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (index >= arrayLength(&hex_data)) { return; }
 
     var cell = hex_data[index];
-    var residual = cell.elevation_residual;
+    var elevation_residual = cell.elevation_residual;
+    var load_residual = cell.suspended_load_residual;
     var log_entry: Log = Log(0.0, 0.0, 0.0, 0.0);
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[index]), 0.0);
-    let capacity = KC * min(total_water_depth(cell), min(height_diff, HEX_SIZE));
+    let capacity = KC * total_water_depth(cell) * min(height_diff, HEX_SIZE) / HEX_SIZE;
 
     if (cell.suspended_load < capacity) {
         // erode
         let amount = KE * (capacity - cell.suspended_load) * cell.erosion_multiplier;
 
-        residual -= amount;
-        let adj = trunc(residual * 512.0) / 512.0;
+        elevation_residual -= amount;
+        let adj = trunc(elevation_residual * 512.0) / 512.0;
         cell.elevation += adj;
-        residual -= adj;
+        elevation_residual -= adj;
+        cell.elevation_residual = elevation_residual;
 
-        cell.elevation_residual = residual;
-        cell.suspended_load += amount;
+        load_residual += amount;
+        let load_adj = trunc(load_residual * 512.0) / 512.0;
+        cell.suspended_load += load_adj;
+        load_residual -= load_adj;
+        cell.suspended_load_residual = load_residual;
+
         log_entry.eroded = amount;
     } else {
         // deposit
@@ -65,14 +72,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             amount = MAX_ELEVATION - cell.elevation;
         }
 
-        residual += amount;
-        let adj = trunc(residual * 512.0) / 512.0;
+        elevation_residual += amount;
+        let adj = trunc(elevation_residual * 512.0) / 512.0;
         cell.elevation += adj;
-        residual -= adj;
+        elevation_residual -= adj;
+        cell.elevation_residual = elevation_residual;
 
-        cell.elevation_residual = residual;
-        cell.suspended_load -= amount;
-        cell.suspended_load = max(cell.suspended_load, 0.0);
+        load_residual -= amount;
+        let load_adj = trunc(load_residual * 512.0) / 512.0;
+        cell.suspended_load += load_adj;
+        load_residual -= load_adj;
+
+        if (cell.suspended_load + load_residual < 0.0) {
+            cell.suspended_load = 0.0;
+            load_residual = 0.0;
+        }
+
+        cell.suspended_load_residual = load_residual;
+
         log_entry.deposited = amount;
     }
 

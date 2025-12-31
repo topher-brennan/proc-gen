@@ -48,7 +48,7 @@ pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
 pub const BASIN_X_BOUNDARY: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
 // TODO: Fix this—it's putting the river source outside the basin proper.
-pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + NE_BASIN_FRINGE / 2;
+pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + NE_BASIN_FRINGE - 1;
 pub const SEA_LEVEL: f32 = 0.0;
 pub const BASE_SEA_LEVEL: f32 = SEA_LEVEL;
 
@@ -59,17 +59,19 @@ pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 16_900.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 11_200.0;
 pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
-pub const NE_BASIN_MIN_ELEVATION: f32 = 800.0;
+// pub const NE_BASIN_MIN_ELEVATION: f32 = NORTH_DESERT_WIDTH_MILES;
+pub const NE_BASIN_MIN_ELEVATION: f32 = BOUNDARY_ELEVATION;
 
-pub const KC: f32 = 0.1; // capacity coefficient
-pub const KE: f32 = 0.1; // erosion rate fraction
+pub const KC: f32 = 1.5; // capacity coefficient
+pub const KE: f32 = 0.002; // erosion rate fraction
                          // Experimentally, a KD of 0.01 results in even filling of large lakes.
                          // Too high a value may result in water sloshing back and forth drilling
                          // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 0.01; // deposition rate fraction
+pub const KD: f32 = 0.002; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
-pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE;
+// 0.5 factor is targeted rise / run ratio of the highest peaks.
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE * 0.5;
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.
