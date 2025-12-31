@@ -1617,6 +1617,7 @@ fn main() {
                 let deviated_x: usize = (x as i16 + x_deviation).max(0) as usize;
                 let deviated_y: usize = (y as i16 + y_deviation).max(0) as usize;
                 let distance_from_coast = deviated_x as f32 - TOTAL_SEA_WIDTH as f32;
+                let slow_coast_factor = -1.0 * (distance_from_coast / NO_ISLANDS_ZONE_WIDTH as f32).clamp(-1.0, 0.0);
                 let distance_from_basins = BASIN_X_BOUNDARY as f32 - x as f32;
                 let sea_width_for_river_y =
                     TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
@@ -1648,13 +1649,11 @@ fn main() {
                         local_max = 0.0;
                         elevation = pick_value_from_range(
                             simplex_noise,
-                            ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment,
+                            ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment * slow_coast_factor,
                             local_max,
                         );
                     }
                 } else {
-                    let coast_factor =
-                        get_boundary_factor(-1.0 * distance_from_coast / TRANSITION_PERIOD as f32);
                     let mut min_inland_elevation = 0.0;
                     let mut max_inland_elevation = 0.0;
 
@@ -1784,10 +1783,13 @@ fn main() {
                         }
                     }
 
+                    let fast_coast_factor =
+                        get_boundary_factor(-1.0 * distance_from_coast / TRANSITION_PERIOD as f32);
+
                     let min_elevation =
-                        ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment * coast_factor
-                            + min_inland_elevation * (1.0 - coast_factor);
-                    local_max = max_inland_elevation * (1.0 - coast_factor);
+                        ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment * slow_coast_factor
+                            + min_inland_elevation * (1.0 - fast_coast_factor);
+                    local_max = max_inland_elevation * (1.0 - fast_coast_factor);
 
                     elevation = pick_value_from_range(simplex_noise, min_elevation, local_max);
                 }
