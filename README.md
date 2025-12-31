@@ -14,6 +14,14 @@ Another example usage:
 cargo run --release -- --rounds 10000 --seed 4064140151
 ```
 
+# Multi-Stage Simulation:
+
+Simulating ~20,000 years in three stages:
+* 10,000 rounds at 7 steps per day: ~17342 years
+* 10,000 rounds at (24*2) steps per day: ~2529 years
+* 10,000 rounds at (24*60) steps per day: ~84 years
+
+
 Reading list
 ------------
 • [Liang et al. 2015](https://esurf.copernicus.org/articles/3/67/2015/esurf-3-67-2015.html) – DeltaRCM reduced-complexity delta model ([GitHub](https://github.com/DeltaRCM/pyDeltaRCM)).

@@ -1610,10 +1610,10 @@ fn main() {
                     TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32;
 
                 // TODO: Simplify once I'm sure everything else is right.
-                let diagonally_deviated_y = deviated_y.min(
-                    deviated_y
-                        - (CENTRAL_HIGHLAND_HEIGHT * (x - TOTAL_SEA_WIDTH)) / MAIN_RIVER_WIDTH,
-                );
+                let diagonally_deviated_y = (deviated_y as i32).min(
+                    (deviated_y as i32)
+                        - (CENTRAL_HIGHLAND_HEIGHT as i32 * (x as i32 - TOTAL_SEA_WIDTH as i32)) / NORTH_DESERT_WIDTH as i32,
+                ) as usize;
                 let local_north_desert_height = MIN_NORTH_DESERT_HEIGHT + deviated_y - diagonally_deviated_y;
 
                 let simplex_noise = noise_map[y][x];
@@ -1647,21 +1647,27 @@ fn main() {
                     let mut max_inland_elevation = 0.0;
 
                     if deviated_y < local_north_desert_height {
-                        let mut edges_factor = 0.0;
+                        let local_river_y = pick_value_from_range(
+                            (1.0 - distance_from_coast / NORTH_DESERT_WIDTH as f32)
+                                .clamp(0.0, 1.0),
+                            SOURCE_Y as f32,
+                            RIVER_Y as f32,
+                        );
+
+                        let basins_factor = (distance_from_coast.min(distance_from_basins)
+                        / TRANSITION_PERIOD as f32)
+                        .clamp(0.0, 1.0);
                         // TODO: If/else is here because abs() didn't seem to work correctly, need to investigate.
                         let mut factor1: f32 = 0.0;
                         if deviated_x < TOTAL_SEA_WIDTH {
-                            factor1 = ((TOTAL_SEA_WIDTH - deviated_x) as f32
-                                / TRANSITION_PERIOD as f32)
-                                .clamp(0.0, 1.0);
+                            factor1 = basins_factor;
                         } else {
                             factor1 = (distance_from_coast.min(distance_from_basins)
                                 / TRANSITION_PERIOD as f32)
                                 .clamp(0.0, 1.0);
                         }
-                        edges_factor = factor1;
                         factor1 = factor1
-                            .min(deviated_y as f32 / RIVER_Y as f32)
+                            .min(deviated_y as f32 / local_river_y as f32)
                             .clamp(0.0, 1.0);
                         factor1 = factor1.min(
                             (local_north_desert_height - deviated_y) as f32
@@ -1672,7 +1678,7 @@ fn main() {
                         let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
                         let (cx2, cy2) = hex_coordinates_to_cartesian(
                             TOTAL_SEA_WIDTH as i32 - sea_deviation_for_river_y as i32,
-                            RIVER_Y as i32,
+                            local_river_y as i32,
                         );
                         // Area is oval-shaped, not circular, with the longer axis running east-west.
                         // I keep fiddling with the ratio of the longer axis to the shorter axis, for awhile I'd settled on 2:1 but
@@ -1694,24 +1700,31 @@ fn main() {
                         ) * factor2
                             + (1.0 - factor2) * OUTLET_ELEVATION;
 
-                        // if max_inland_elevation > BOUNDARY_ELEVATION {
-                        //     let local_river_y = pick_value_from_range(
-                        //         (1.0 - distance_from_coast / NORTH_DESERT_WIDTH as f32)
-                        //             .clamp(0.0, 1.0),
-                        //         SOURCE_Y as f32,
-                        //         RIVER_Y as f32,
-                        //     );
-                        //     let valley_factor = ((deviated_y as f32 - local_river_y)
-                        //         / TRANSITION_PERIOD as f32)
-                        //         .abs()
-                        //         .max(1.0 - edges_factor)
-                        //         .clamp(0.0, 1.0);
-                        //     max_inland_elevation = pick_value_from_range(
-                        //         valley_factor,
-                        //         BOUNDARY_ELEVATION,
-                        //         max_inland_elevation,
-                        //     );
-                        // }
+                        if max_inland_elevation > BOUNDARY_ELEVATION {
+                            let local_river_y = pick_value_from_range(
+                                (1.0 - distance_from_coast / NORTH_DESERT_WIDTH as f32)
+                                    .clamp(0.0, 1.0),
+                                SOURCE_Y as f32,
+                                RIVER_Y as f32,
+                            );
+                            // let mut valley_transition_period = (TRANSITION_PERIOD as f32).max(local_north_desert_height as f32 - local_river_y);
+                            let mut valley_transition_period = TRANSITION_PERIOD as f32;
+                            if (deviated_y as f32) < local_river_y {
+                                valley_transition_period = local_river_y;
+                            } else {
+                                valley_transition_period = (TRANSITION_PERIOD as f32).max(local_north_desert_height as f32 - local_river_y);
+                            }
+                            let valley_factor = ((deviated_y as f32 - local_river_y)
+                                / valley_transition_period)
+                                .abs()
+                                .max(1.0 - basins_factor)
+                                .clamp(0.0, 1.0);
+                            max_inland_elevation = pick_value_from_range(
+                                valley_factor,
+                                BOUNDARY_ELEVATION,
+                                max_inland_elevation,
+                            );
+                        }
                     } else if deviated_y < MIN_NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                         let factor1 = ((deviated_y - local_north_desert_height) as f32
                             / TRANSITION_PERIOD as f32)

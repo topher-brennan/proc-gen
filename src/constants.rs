@@ -30,15 +30,8 @@ pub const CENTRAL_HIGHLAND_HEIGHT: usize =
 pub const SOUTH_MOUNTAINS_HEIGHT: usize =
     HEIGHT_PIXELS - MIN_NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT;
 
-// 800 miles in hexes.
-pub const MAIN_RIVER_WIDTH: usize = (800.0 * 2.0 / HEX_FACTOR) as usize;
-// Delta will grow over time but we are "seeding" an area for it to form.
-// May need to put hills north and south of RIVER_Y, DELTA_SEED_WIDTH from
-// the coast, to force the exact location, but will test without first.
-// TODO: Remove once we're sure we don't need it.
-pub const DELTA_SEED_WIDTH: usize = 0;
-// River runs through north desert
-pub const NORTH_DESERT_WIDTH: usize = MAIN_RIVER_WIDTH + DELTA_SEED_WIDTH;
+pub const NORTH_DESERT_WIDTH_MILES: f32 = 800.0;
+pub const NORTH_DESERT_WIDTH: usize = (NORTH_DESERT_WIDTH_MILES * 2.0 / HEX_FACTOR) as usize;
 pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
 pub const NE_BASIN_FRINGE: usize = 4;
 // An attempt to balance water in north and central regions mathematically.
