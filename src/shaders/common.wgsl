@@ -21,3 +21,16 @@ fn sediment_fraction(cell: Hex) -> f32 {
     }
     return cell.suspended_load / tf;
 }
+
+fn calculate_flow(f: f32, diff: f32) -> f32 {
+    var move_f = 0.0;
+    if (2.0 * f <= diff) {
+        move_f = f;
+    } else if (f < diff && diff < 2.0 * f) {
+        move_f = (diff - f) + (2.0 * f - diff) * FLOW_FACTOR;
+    } else { // diff <= f
+        move_f = diff * FLOW_FACTOR;
+    }
+
+    return min(move_f, MAX_FLOW);
+}

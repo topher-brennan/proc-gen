@@ -10,8 +10,8 @@ const FLOW_FACTOR: f32 = 0.9;
 const MAX_FLOW: f32 = 2640.0;
 
 const KC: f32 = 1.5;
-const KE: f32 = 0.002;
-const KD: f32 = 0.002;
+const KE: f32 = 0.01;
+const KD: f32 = 0.01;
 const MAX_SLOPE: f32 = 1.0;
 const MAX_ELEVATION: f32 = 16900.0;
 
@@ -19,6 +19,6 @@ const YEARS_PER_STEP: f32 = 0.0003911299;
 const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
 const BASIN_X_BOUNDARY: f32 = 4204.0;
 const BASIN_Y_BOUNDARY: f32 = 897.0;
-const NE_BASIN_MIN_ELEVATION: f32 = 2000.0;
+const NE_BASIN_MIN_ELEVATION: f32 = 800.0;
 
 const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16800.0;

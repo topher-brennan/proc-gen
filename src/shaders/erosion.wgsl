@@ -46,7 +46,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[index]), 0.0);
-    let capacity = KC * total_water_depth(cell) * min(height_diff, HEX_SIZE) / HEX_SIZE;
+    let capacity = KC * calculate_flow(total_fluid(cell), height_diff) * (1.0 - sediment_fraction(cell));
 
     if (cell.suspended_load < capacity) {
         // erode
@@ -96,9 +96,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = i32(index % u32(WIDTH));
     let y = i32(index / u32(WIDTH));
 
-    if x > i32(BASIN_X_BOUNDARY) && y < i32(BASIN_Y_BOUNDARY) && cell.elevation < NE_BASIN_MIN_ELEVATION {
-        cell.elevation = NE_BASIN_MIN_ELEVATION + params.sea_level;
-    }
+    // if x > i32(BASIN_X_BOUNDARY) && y < i32(BASIN_Y_BOUNDARY) && cell.elevation < NE_BASIN_MIN_ELEVATION {
+    //     cell.elevation = NE_BASIN_MIN_ELEVATION + params.sea_level;
+    // }
     cell.elevation_residual += cell.uplift * YEARS_PER_STEP;
 
     hex_data[index] = cell;

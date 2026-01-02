@@ -59,15 +59,15 @@ pub const SOUTH_MOUNTAINS_MAX_ELEVATION: f32 = 16_900.0;
 pub const ISLANDS_MAX_ELEVATION: f32 = 11_200.0;
 pub const OUTLET_ELEVATION: f32 = 200.0;
 pub const BOUNDARY_ELEVATION: f32 = 2000.0;
-// pub const NE_BASIN_MIN_ELEVATION: f32 = NORTH_DESERT_WIDTH_MILES;
-pub const NE_BASIN_MIN_ELEVATION: f32 = BOUNDARY_ELEVATION;
+pub const NE_BASIN_MIN_ELEVATION: f32 = NORTH_DESERT_WIDTH_MILES;
+// pub const NE_BASIN_MIN_ELEVATION: f32 = BOUNDARY_ELEVATION;
 
 pub const KC: f32 = 1.5; // capacity coefficient
-pub const KE: f32 = 0.002; // erosion rate fraction
+pub const KE: f32 = 0.01; // erosion rate fraction
                          // Experimentally, a KD of 0.01 results in even filling of large lakes.
                          // Too high a value may result in water sloshing back and forth drilling
                          // pits in lakes, not sure where the limit is though.
-pub const KD: f32 = 0.002; // deposition rate fraction
+pub const KD: f32 = 0.01; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
 // 0.5 factor is targeted rise / run ratio of the highest peaks.
