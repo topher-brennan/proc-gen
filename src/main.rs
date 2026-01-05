@@ -435,7 +435,7 @@ fn simulate_erosion(
         "  BASE_SEA_LEVEL {}  MIN_NORTH_DESERT_HEIGHT {}  CENTRAL_HIGHLAND_HEIGHT {}  SOUTH_MOUNTAINS_HEIGHT {}",
         BASE_SEA_LEVEL, MIN_NORTH_DESERT_HEIGHT, CENTRAL_HIGHLAND_HEIGHT, SOUTH_MOUNTAINS_HEIGHT
     );
-    println!("  RIVER_Y {}  RIVER_SOURCE_X {}", RIVER_Y, RIVER_SOURCE_X);
+    println!("  OUTLET_Y {}  RIVER_SOURCE_X {}", OUTLET_Y, RIVER_SOURCE_X);
 
     let round_size = get_round_size();
 
@@ -529,11 +529,11 @@ fn simulate_erosion(
                 })
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
                 .map(|(y, _)| y)
-                .unwrap_or(RIVER_Y);
+                .unwrap_or(OUTLET_Y);
 
             let source_hex = &hex_map[source_y][RIVER_SOURCE_X];
-            let outlet_hex = &hex_map[RIVER_Y][TOTAL_SEA_WIDTH];
-            let target_delta_hex = &hex_map[RIVER_Y][TOTAL_SEA_WIDTH - 231];
+            let outlet_hex = &hex_map[OUTLET_Y][TOTAL_SEA_WIDTH];
+            let target_delta_hex = &hex_map[OUTLET_Y][TOTAL_SEA_WIDTH - 231];
 
             // The more the hex we want to be the edge of the delta is dry, the more we want
             // we want to bring the sea level up to match.
@@ -1548,7 +1548,7 @@ fn main() {
 
         let simplex = Simplex::new(loaded_seed);
         let _sea_deviation_for_river_y: i16 =
-            get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+            get_sea_deviation(&simplex, OUTLET_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
         (
             loaded_hex_map,
@@ -1576,19 +1576,19 @@ fn main() {
         let simplex = Simplex::new(seed);
         let noise_map = get_normalized_simplex_noise_map(&simplex);
         let sea_deviation_for_river_y: i16 =
-            get_sea_deviation(&simplex, RIVER_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
+            get_sea_deviation(&simplex, OUTLET_Y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
         let x_deviation_for_outlet = sea_deviation_for_river_y
             + get_land_deviation(
                 &simplex,
                 TOTAL_SEA_WIDTH as f64,
-                RIVER_Y as f64,
+                OUTLET_Y as f64,
                 DEVIATION_PERIOD,
             );
         let y_deviation_for_outlet = get_land_deviation(
             &simplex,
             (TOTAL_SEA_WIDTH + WIDTH_HEXAGONS) as f64,
-            RIVER_Y as f64,
+            OUTLET_Y as f64,
             96.0,
         );
 
@@ -1662,29 +1662,24 @@ fn main() {
                             (1.0 - distance_from_coast / NORTH_DESERT_WIDTH as f32)
                                 .clamp(0.0, 1.0),
                             SOURCE_Y as f32,
-                            RIVER_Y as f32,
+                            OUTLET_Y as f32,
                         );
 
-                        let basins_factor = (distance_from_coast.min(distance_from_basins)
-                        / TRANSITION_PERIOD as f32)
-                        .clamp(0.0, 1.0);
-                        // TODO: If/else is here because abs() didn't seem to work correctly, need to investigate.
-                        let mut factor1: f32 = 0.0;
-                        if deviated_x < TOTAL_SEA_WIDTH {
-                            factor1 = basins_factor;
-                        } else {
-                            factor1 = (distance_from_coast.min(distance_from_basins)
-                                / TRANSITION_PERIOD as f32)
-                                .clamp(0.0, 1.0);
-                        }
-                        factor1 = factor1
-                            .min(deviated_y as f32 / local_river_y as f32)
-                            .clamp(0.0, 1.0);
-                        factor1 = factor1.min(
-                            (local_north_desert_height - deviated_y) as f32
-                                / TRANSITION_PERIOD as f32,
-                        );
-                        factor1 = get_boundary_factor(factor1);
+                        let basin_factor = 1.0 - (distance_from_basins / TRANSITION_PERIOD as f32).clamp(0.0, 1.0);
+                        let highlands_factor = 1.0 - ((local_north_desert_height - deviated_y) as f32 / TRANSITION_PERIOD as f32).clamp(0.0, 1.0);
+                        let northeast_factor = 1.0 - (distance_from_coast.abs() / TRANSITION_PERIOD as f32).min(deviated_y as f32 / local_river_y as f32).clamp(0.0, 1.0);
+                        let boundary_factor = get_boundary_factor(northeast_factor.max(basin_factor).max(highlands_factor));
+
+                        // let plateau_height = local_north_desert_height.min(MIN_NORTH_DESERT_HEIGHT + TRANSITION_PERIOD as usize);
+                        // let plateau_factor = if deviated_y < plateau_height {
+                        //     1.0 - ((plateau_height - deviated_y) as f32 / TRANSITION_PERIOD as f32).clamp(0.0, 1.0)
+                        // } else {
+                        //     1.0
+                        // };
+                        let southwest_factor = basin_factor.max(highlands_factor);
+
+                        min_inland_elevation = pick_value_from_range(boundary_factor, LAKE_MIN_ELEVATION, BOUNDARY_ELEVATION);
+                        max_inland_elevation = pick_value_from_range(southwest_factor, FAR_NORTH_DESERT_MAX_ELEVATION, NORTH_DESERT_MAX_ELEVATION);
 
                         let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
                         let (cx2, cy2) = hex_coordinates_to_cartesian(
@@ -1694,48 +1689,12 @@ fn main() {
                         // Area is oval-shaped, not circular, with the longer axis running east-west.
                         // I keep fiddling with the ratio of the longer axis to the shorter axis, for awhile I'd settled on 2:1 but
                         // seem to be having trouble making up my mind.
-                        let factor2 = (cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2)
+                        let outlet_factor = 1.0 -(cartesian_distance(0.0, cy1, (cx2 - cx1) / 2.0, cy2)
                             / (TRANSITION_PERIOD as f32))
                             .min(1.0);
 
-                        // TODO: Could make this local_north_desert_height instead, keeping it as-is while debugging.
-                        let factor3 = (y as f32 / MIN_NORTH_DESERT_HEIGHT as f32).clamp(0.0, 1.0);
-
-                        min_inland_elevation = BOUNDARY_ELEVATION * (1.0 - factor1) * factor2
-                            + (1.0 - factor2) * OUTLET_ELEVATION
-                            + factor1 * LAKE_MIN_ELEVATION;
-                        max_inland_elevation = pick_value_from_range(
-                            factor3,
-                            FAR_NORTH_DESERT_MAX_ELEVATION,
-                            NORTH_DESERT_MAX_ELEVATION,
-                        ) * factor2
-                            + (1.0 - factor2) * OUTLET_ELEVATION;
-
-                        if max_inland_elevation > BOUNDARY_ELEVATION {
-                            let local_river_y = pick_value_from_range(
-                                (1.0 - distance_from_coast / NORTH_DESERT_WIDTH as f32)
-                                    .clamp(0.0, 1.0),
-                                SOURCE_Y as f32,
-                                RIVER_Y as f32,
-                            );
-                            // let mut valley_transition_period = (TRANSITION_PERIOD as f32).max(local_north_desert_height as f32 - local_river_y);
-                            let mut valley_transition_period = TRANSITION_PERIOD as f32;
-                            if (deviated_y as f32) < local_river_y {
-                                valley_transition_period = local_river_y;
-                            } else {
-                                valley_transition_period = (TRANSITION_PERIOD as f32).max(local_north_desert_height as f32 - local_river_y);
-                            }
-                            let valley_factor = ((deviated_y as f32 - local_river_y)
-                                / valley_transition_period)
-                                .abs()
-                                .max(1.0 - basins_factor)
-                                .clamp(0.0, 1.0);
-                            max_inland_elevation = pick_value_from_range(
-                                valley_factor,
-                                BOUNDARY_ELEVATION,
-                                max_inland_elevation,
-                            );
-                        }
+                        min_inland_elevation = OUTLET_ELEVATION * outlet_factor + min_inland_elevation * (1.0 - outlet_factor);
+                        max_inland_elevation = OUTLET_ELEVATION * outlet_factor + max_inland_elevation * (1.0 - outlet_factor);
                     } else if deviated_y < MIN_NORTH_DESERT_HEIGHT + CENTRAL_HIGHLAND_HEIGHT {
                         let factor1 = ((deviated_y - local_north_desert_height) as f32
                             / TRANSITION_PERIOD as f32)

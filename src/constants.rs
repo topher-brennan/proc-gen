@@ -12,7 +12,7 @@ pub const WIDTH_PIXELS: usize = 3840;
 pub const WIDTH_HEXAGONS: usize = (WIDTH_PIXELS as f32 / HEX_FACTOR) as usize;
 
 pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 7.0;
+pub const STEPS_PER_DAY: f32 = 12.0;
 pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
@@ -21,8 +21,8 @@ pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.0;
 pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
 pub const DEVIATION_PERIOD: f64 = 96.0;
-pub const RIVER_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
-pub const SOURCE_Y: usize = MIN_NORTH_DESERT_HEIGHT / 2;
+pub const OUTLET_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
+pub const SOURCE_Y: usize = TRANSITION_PERIOD as usize;
 pub const MIN_NORTH_DESERT_HEIGHT: usize = (6.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
 pub const NE_BASIN_HEIGHT: usize = MIN_NORTH_DESERT_HEIGHT;
 pub const CENTRAL_HIGHLAND_HEIGHT: usize =
@@ -71,7 +71,7 @@ pub const KD: f32 = 0.01; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
 // 0.5 factor is targeted rise / run ratio of the highest peaks.
-pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE * 0.5;
+pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE;
 
 pub const FLOW_FACTOR: f32 = 0.9;
 // Might take 7k-10k rounds to carve out the river valley I want.
