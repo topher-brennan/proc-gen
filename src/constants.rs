@@ -11,9 +11,9 @@ pub const HEIGHT_PIXELS: usize = 2160;
 pub const WIDTH_PIXELS: usize = 3840;
 pub const WIDTH_HEXAGONS: usize = (WIDTH_PIXELS as f32 / HEX_FACTOR) as usize;
 
-pub const DAYS_PER_YEAR: f32 = 365.2422;
-pub const STEPS_PER_DAY: f32 = 12.0;
-pub const YEARS_PER_STEP: f32 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
+pub const DAYS_PER_YEAR: f64 = 365.2422;
+pub const STEPS_PER_DAY: f64 = 12.0;
+pub const YEARS_PER_STEP: f64 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
 
@@ -64,9 +64,9 @@ pub const NE_BASIN_MIN_ELEVATION: f32 = NORTH_DESERT_WIDTH_MILES;
 
 pub const KC: f32 = 1.5; // capacity coefficient
 pub const KE: f32 = 0.01; // erosion rate fraction
-                         // Experimentally, a KD of 0.01 results in even filling of large lakes.
-                         // Too high a value may result in water sloshing back and forth drilling
-                         // pits in lakes, not sure where the limit is though.
+                          // Experimentally, a KD of 0.01 results in even filling of large lakes.
+                          // Too high a value may result in water sloshing back and forth drilling
+                          // pits in lakes, not sure where the limit is though.
 pub const KD: f32 = 0.01; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
