@@ -9,7 +9,9 @@ pub const HEX_WIDTH: f32 = HEX_SIZE * HEX_FACTOR;
 
 pub const HEIGHT_PIXELS: usize = 2160;
 pub const WIDTH_PIXELS: usize = 3840;
-pub const WIDTH_HEXAGONS: usize = (WIDTH_PIXELS as f32 / HEX_FACTOR) as usize;
+// Use f32 for the base calculation, round to avoid truncation artifacts
+pub const WIDTH_HEXAGONS_F: f32 = WIDTH_PIXELS as f32 / HEX_FACTOR;
+pub const WIDTH_HEXAGONS: usize = (WIDTH_HEXAGONS_F + 0.5) as usize;
 
 pub const DAYS_PER_YEAR: f64 = 365.2422;
 pub const STEPS_PER_DAY: f64 = 12.0;
@@ -19,33 +21,51 @@ pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
 
 // Top edge of the map is assumed to be 25 degrees south latitude.
 pub const ONE_DEGREE_LATITUDE_MILES: f32 = 69.0;
-pub const TRANSITION_PERIOD: f64 = ONE_DEGREE_LATITUDE_MILES as f64 * 2.0;
-pub const DEVIATION_PERIOD: f64 = 96.0;
-pub const OUTLET_Y: usize = (4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
-pub const SOURCE_Y: usize = TRANSITION_PERIOD as usize;
-pub const MIN_NORTH_DESERT_HEIGHT: usize = (6.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize;
+// Use f32 for consistency with most calculations (avoid f32<->f64 conversions)
+pub const TRANSITION_PERIOD: f32 = ONE_DEGREE_LATITUDE_MILES * 2.0;
+pub const DEVIATION_PERIOD: f32 = 96.0;
+// Keep float versions of Y coordinates to avoid stepped boundaries
+pub const OUTLET_Y_F: f32 = 4.5 * ONE_DEGREE_LATITUDE_MILES * 2.0;
+pub const OUTLET_Y: usize = OUTLET_Y_F as usize;
+pub const SOURCE_Y_F: f32 = TRANSITION_PERIOD;
+pub const SOURCE_Y: usize = SOURCE_Y_F as usize;
+pub const MIN_NORTH_DESERT_HEIGHT_F: f32 = 6.5 * ONE_DEGREE_LATITUDE_MILES * 2.0;
+pub const MIN_NORTH_DESERT_HEIGHT: usize = MIN_NORTH_DESERT_HEIGHT_F as usize;
 pub const NE_BASIN_HEIGHT: usize = MIN_NORTH_DESERT_HEIGHT;
-pub const CENTRAL_HIGHLAND_HEIGHT: usize =
-    (11.5 * ONE_DEGREE_LATITUDE_MILES * 2.0) as usize - MIN_NORTH_DESERT_HEIGHT;
-pub const SOUTH_MOUNTAINS_HEIGHT: usize =
-    HEIGHT_PIXELS - MIN_NORTH_DESERT_HEIGHT - CENTRAL_HIGHLAND_HEIGHT;
+pub const NE_BASIN_HEIGHT_F: f32 = MIN_NORTH_DESERT_HEIGHT_F;
+pub const CENTRAL_HIGHLAND_HEIGHT_F: f32 =
+    11.5 * ONE_DEGREE_LATITUDE_MILES * 2.0 - MIN_NORTH_DESERT_HEIGHT_F;
+pub const CENTRAL_HIGHLAND_HEIGHT: usize = CENTRAL_HIGHLAND_HEIGHT_F as usize;
+pub const SOUTH_MOUNTAINS_HEIGHT_F: f32 =
+    HEIGHT_PIXELS as f32 - MIN_NORTH_DESERT_HEIGHT_F - CENTRAL_HIGHLAND_HEIGHT_F;
+pub const SOUTH_MOUNTAINS_HEIGHT: usize = SOUTH_MOUNTAINS_HEIGHT_F as usize;
 
 pub const NORTH_DESERT_WIDTH_MILES: f32 = 800.0;
-pub const NORTH_DESERT_WIDTH: usize = (NORTH_DESERT_WIDTH_MILES * 2.0 / HEX_FACTOR) as usize;
-pub const COAST_WIDTH: usize = (72.0 * 2.0 / HEX_FACTOR) as usize;
+// Use float versions for calculations, integer versions for array indexing
+pub const NORTH_DESERT_WIDTH_F: f32 = NORTH_DESERT_WIDTH_MILES * 2.0 / HEX_FACTOR;
+pub const NORTH_DESERT_WIDTH: usize = (NORTH_DESERT_WIDTH_F + 0.5) as usize;
+pub const COAST_WIDTH_F: f32 = 72.0 * 2.0 / HEX_FACTOR;
+pub const COAST_WIDTH: usize = (COAST_WIDTH_F + 0.5) as usize;
 pub const NE_BASIN_FRINGE: usize = 4;
+pub const NE_BASIN_FRINGE_F: f32 = NE_BASIN_FRINGE as f32;
 // An attempt to balance water in north and central regions mathematically.
 // TODO: Maybe fix at 140?
-pub const NE_BASIN_WIDTH: usize = (100.0 * 2.0 / HEX_FACTOR) as usize;
+pub const NE_BASIN_WIDTH_F: f32 = 100.0 * 2.0 / HEX_FACTOR;
+pub const NE_BASIN_WIDTH: usize = (NE_BASIN_WIDTH_F + 0.5) as usize;
 pub const NE_BASIN_RAIN: f32 =
-    515_000.0 / NE_BASIN_HEIGHT as f32 / (NE_BASIN_WIDTH - NE_BASIN_FRINGE - 1) as f32;
+    515_000.0 / NE_BASIN_HEIGHT_F / (NE_BASIN_WIDTH_F - NE_BASIN_FRINGE_F - 1.0);
+pub const TOTAL_LAND_WIDTH_F: f32 = NE_BASIN_WIDTH_F + NORTH_DESERT_WIDTH_F;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
 pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_800.0;
 pub const LAKE_MIN_ELEVATION: f32 = 0.0;
+pub const TOTAL_SEA_WIDTH_F: f32 = WIDTH_HEXAGONS_F - TOTAL_LAND_WIDTH_F;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
-pub const NO_ISLANDS_ZONE_WIDTH: usize = (500.0 * 2.0 / HEX_FACTOR) as usize;
+pub const NO_ISLANDS_ZONE_WIDTH_F: f32 = 500.0 * 2.0 / HEX_FACTOR;
+pub const NO_ISLANDS_ZONE_WIDTH: usize = (NO_ISLANDS_ZONE_WIDTH_F + 0.5) as usize;
+pub const ISLANDS_ZONE_WIDTH_F: f32 = TOTAL_SEA_WIDTH_F - NO_ISLANDS_ZONE_WIDTH_F;
 pub const ISLANDS_ZONE_WIDTH: usize = TOTAL_SEA_WIDTH - NO_ISLANDS_ZONE_WIDTH;
+pub const BASIN_X_BOUNDARY_F: f32 = TOTAL_SEA_WIDTH_F + NORTH_DESERT_WIDTH_F;
 pub const BASIN_X_BOUNDARY: usize = TOTAL_SEA_WIDTH + NORTH_DESERT_WIDTH;
 // TODO: Fix this—it's putting the river source outside the basin proper.
 pub const RIVER_SOURCE_X: usize = BASIN_X_BOUNDARY + NE_BASIN_FRINGE - 1;
