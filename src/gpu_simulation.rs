@@ -992,9 +992,25 @@ impl GpuSimulation {
     }
 
     /// Lightweight keep-alive to service the device without blocking.
-    /// TODO: Not sure if this actually works.
+    /// Uses non-blocking poll - good for calling frequently.
     pub fn heartbeat(&self) {
         self.device.poll(wgpu::Maintain::Poll);
+    }
+
+    /// Synchronize with the GPU by waiting for all submitted work to complete.
+    /// This is much cheaper than downloading data - it just waits without copying.
+    /// Use this to prevent "Parent device is lost" errors without the overhead
+    /// of downloading large buffers.
+    pub fn sync_device(&self) {
+        // Submit an empty command buffer to ensure there's work to wait on
+        let encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Sync Encoder"),
+            });
+        self.queue.submit(std::iter::once(encoder.finish()));
+        // Block until all GPU work completes
+        self.device.poll(wgpu::Maintain::Wait);
     }
 
     pub fn initialize_buffer(&mut self, width: usize, height: usize) {

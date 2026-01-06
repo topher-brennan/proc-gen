@@ -801,9 +801,9 @@ fn simulate_erosion(
                 }
             }
         } else if step % (log_steps / 10) == 0 {
-            // TODO: Get the heartbeat to work.
-            // gpu_sim.heartbeat();
-            gpu_sim.download_hex_data();
+            // Sync with GPU periodically to prevent "Parent device is lost" errors.
+            // This is much cheaper than downloading data - just waits for work to complete.
+            gpu_sim.sync_device();
         }
 
         // let tidal_adjustment: f32 = 3.0 * (2.0 * f32::PI * step as f32 / TIDE_INTERVAL_STEPS as f32).sin();

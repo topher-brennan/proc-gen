@@ -90,7 +90,6 @@ pub const KE: f32 = 0.01; // erosion rate fraction
 pub const KD: f32 = 0.01; // deposition rate fraction
 
 // Used to attempt to compensate for predictable loss of highest peaks over time.
-// 0.5 factor is targeted rise / run ratio of the highest peaks.
 pub const RAIN_BASED_UPLIFT_FACTOR: f32 = KC * KE;
 
 pub const FLOW_FACTOR: f32 = 0.9;

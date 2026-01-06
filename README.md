@@ -9,6 +9,11 @@ To run a quick (~5 minute) test:
 cargo run --release -- --rounds 10
 ```
 
+Or to analyze performance (requires running as administrator):
+```
+cargo flamegraph --release -- --rounds 10
+```
+
 Another example usage:
 ```
 cargo run --release -- --rounds 10000 --seed 4064140151
