@@ -684,12 +684,7 @@ fn simulate_erosion(
             let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
             let total_elapsed = std::time::Duration::from_secs_f64(total_elapsed_secs);
 
-            println!(
-                "Seed {}, round {:.0}:",
-                seed,
-                round,
-                step % (round_size as u32) * 10 / (round_size as u32),
-            );
+            println!("Seed {}, round {:.0}:", seed, round);
             println!(
                 "  water in {:.3}  stored {:.3}  mean depth {:.3} ft  max depth {:.3} ft  wet {:} ({:.1}%)",
                 rainfall_added,
@@ -1618,31 +1613,31 @@ fn main() {
             let sea_deviation = get_sea_deviation(&simplex, y as f64, HEIGHT_PIXELS as f64 / 1.5);
 
             for x in 0..WIDTH_HEXAGONS {
+                let x_f = x as f32;
+                let y_f = y as f32;
                 let mut elevation = 0.0;
                 let mut local_max = SOUTH_MOUNTAINS_MAX_ELEVATION;
                 let mut uplift = 0.0;
                 let x_deviation = x_deviation_for_outlet
                     - sea_deviation
-                    - get_land_deviation(&simplex, x as f64, y as f64, DEVIATION_PERIOD as f64);
+                    - get_land_deviation(&simplex, x_f as f64, y_f as f64, DEVIATION_PERIOD as f64);
                 let y_deviation = y_deviation_for_outlet
                     - get_land_deviation(
                         &simplex,
-                        (x as f32 + WIDTH_HEXAGONS_F) as f64,
-                        y as f64,
+                        (x_f + WIDTH_HEXAGONS_F) as f64,
+                        y_f as f64,
                         DEVIATION_PERIOD as f64,
                     );
-                let deviated_x_f: f32 = (x as f32 + x_deviation).max(0.0);
-                let deviated_y_f: f32 = (y as f32 + y_deviation).max(0.0);
-                let deviated_y: usize = deviated_y_f as usize;
+                let deviated_x_f = (x_f + x_deviation).max(0.0);
+                let deviated_y_f = (y_f + y_deviation).max(0.0);
                 let distance_from_coast = deviated_x_f - TOTAL_SEA_WIDTH_F;
                 let slow_coast_factor =
                     -1.0 * (distance_from_coast / NO_ISLANDS_ZONE_WIDTH_F).clamp(-1.0, 0.0);
-                let distance_from_basins = BASIN_X_BOUNDARY_F - x as f32;
+                let distance_from_basins = BASIN_X_BOUNDARY_F - x_f;
 
                 // Use floating-point division to avoid stepped/banded artifacts
-                let diagonal_offset = CENTRAL_HIGHLAND_HEIGHT_F
-                    * (x as f32 - TOTAL_SEA_WIDTH_F)
-                    / NORTH_DESERT_WIDTH_F;
+                let diagonal_offset =
+                    CENTRAL_HIGHLAND_HEIGHT_F * (x_f - TOTAL_SEA_WIDTH_F) / NORTH_DESERT_WIDTH_F;
                 let diagonally_deviated_y_f =
                     deviated_y_f.min(deviated_y_f - diagonal_offset);
                 let local_north_desert_height_f =
@@ -1727,7 +1722,7 @@ fn main() {
                             NORTH_DESERT_MAX_ELEVATION,
                         ));
 
-                        let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
+                        let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y_f as i32);
                         let (cx2, cy2) = hex_coordinates_to_cartesian(
                             (TOTAL_SEA_WIDTH_F - sea_deviation_for_river_y) as i32,
                             local_river_y as i32,
@@ -1781,7 +1776,7 @@ fn main() {
 
                         if max_inland_elevation > BOUNDARY_ELEVATION {
                             let far_south_factor =
-                                ((y as f32 - 15.0 * ONE_DEGREE_LATITUDE_MILES) / TRANSITION_PERIOD)
+                                ((y_f - 15.0 * ONE_DEGREE_LATITUDE_MILES) / TRANSITION_PERIOD)
                                     .clamp(0.0, 1.0);
                             max_inland_elevation = pick_value_from_range(
                                 far_south_factor,
@@ -1817,7 +1812,7 @@ fn main() {
                         // TODO: 1.01 factor may have been to make absolutely sure this will be above north desert,
                         // but should it be removed?
                         rainfall = NE_BASIN_RAIN;
-                    } else if (y as f32) <= NE_BASIN_HEIGHT_F + NE_BASIN_FRINGE_F
+                    } else if y_f <= NE_BASIN_HEIGHT_F + NE_BASIN_FRINGE_F
                         && distance_from_source_y > 0.0
                     {
                         // This specifically doesn't include y-deviation so the river source is exactly where we want it to be.
@@ -1826,7 +1821,7 @@ fn main() {
                                 .min(1.0);
                         elevation += HEX_SIZE * factor;
                     } else if distance_from_source_y > 0.0 {
-                        elevation += (x as f32 - BASIN_X_BOUNDARY_F - 1.0) * HEX_SIZE;
+                        elevation += (x_f - BASIN_X_BOUNDARY_F - 1.0) * HEX_SIZE;
 
                         // Deliberately silly "stepped" pattern using otherwise "unused" space under northeast basin
                         let no_increments: f32 =
