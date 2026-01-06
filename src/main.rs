@@ -400,7 +400,7 @@ fn simulate_erosion(
     steps: u32,
     seed: u32,
     starting_step: u32,
-    starting_years: f32,
+    starting_years: f64,
     initial_max_elevation: f32,
     initial_avg_elevation: f32,
     initial_sea_avg_elevation: f32,
@@ -408,7 +408,7 @@ fn simulate_erosion(
     initial_central_avg: f32,
     initial_south_avg: f32,
     prior_elapsed_secs: f64,
-) -> (f32, f32, f64) {
+) -> (f32, f64, f64) {
     let water_start = Instant::now();
 
     let height = HEIGHT_PIXELS as usize;
@@ -447,7 +447,7 @@ fn simulate_erosion(
     for step_offset in 0..steps {
         let step = starting_step + step_offset;
         let seasonal_rain_multiplier =
-            1.0 + (years * 2.0 * std::f32::consts::PI + std::f32::consts::PI).cos();
+            1.0 + (years * 2.0 * std::f64::consts::PI + std::f64::consts::PI).cos();
 
         if step % log_steps == 0 {
             let gpu_hex_data = gpu_sim.download_hex_data();
@@ -697,7 +697,7 @@ fn simulate_erosion(
             );
             println!(
                 "  years: {:.3}  sea level: {:.3} ft  seasonal rain multiplier: {:.3}",
-                years, current_sea_level, seasonal_rain_multiplier
+                years, current_sea_level, seasonal_rain_multiplier as f32
             );
             println!(
                 "  source elevation {:.3} ft  source water depth {:.3} ft  source sediment {:.3} ft",
@@ -814,9 +814,9 @@ fn simulate_erosion(
             width,
             height,
             current_sea_level + tidal_adjustment,
-            seasonal_rain_multiplier,
+            seasonal_rain_multiplier as f32,
         );
-        current_sea_level = BASE_SEA_LEVEL + 0.02 * years;
+        current_sea_level = BASE_SEA_LEVEL + 0.02 * years as f32;
         years += YEARS_PER_STEP;
     }
 
@@ -953,7 +953,7 @@ fn save_simulation_state_csv(
     hex_map: &Vec<Vec<Hex>>,
     seed: u32,
     step: u32,
-    years: f32,
+    years: f64,
     initial_max_elevation: f32,
     initial_avg_elevation: f32,
     initial_sea_avg_elevation: f32,
@@ -985,7 +985,7 @@ fn save_simulation_state_csv(
         wtr.write_record(&[
             seed.to_string(),
             step.to_string(),
-            years.to_bits().to_string(),
+            years.to_bits().to_string(), // f64 bits
             initial_max_elevation.to_bits().to_string(),
             initial_avg_elevation.to_bits().to_string(),
             initial_sea_avg_elevation.to_bits().to_string(),
@@ -1048,7 +1048,7 @@ fn load_simulation_state_csv(
     Vec<Vec<Hex>>,
     u32,
     u32,
-    f32,
+    f64,
     f32,
     f32,
     f32,
@@ -1063,7 +1063,7 @@ fn load_simulation_state_csv(
     let mut hex_map: Vec<Vec<Hex>> = Vec::new();
     let mut seed = 0u32;
     let mut step = 0u32;
-    let mut years = 0.0f32;
+    let mut years = 0.0f64;
     let mut initial_max_elevation = 0.0f32;
     let mut initial_avg_elevation = 0.0f32;
     let mut initial_sea_avg_elevation = 0.0f32;
@@ -1086,17 +1086,17 @@ fn load_simulation_state_csv(
             // Years values are typically small (< 1000), while initial_max_elevation bits are large u32 values
             let mut field_offset = 0;
             if record.len() > 2 {
-                let val: u32 = record[2].parse().expect("Failed to parse field 2");
-                // If the value is small enough to be a reasonable years value when interpreted as f32 bits,
+                let val: u64 = record[2].parse().expect("Failed to parse field 2");
+                // If the value is small enough to be a reasonable years value when interpreted as f64 bits,
                 // it's the new format. Old format had initial_max_elevation bits which are large numbers.
-                let as_f32 = f32::from_bits(val);
-                if as_f32 >= 0.0 && as_f32 < 100_000.0 {
+                let as_f64 = f64::from_bits(val);
+                if as_f64 >= 0.0 && as_f64 < 100_000.0 {
                     // New format with years field
-                    years = as_f32;
+                    years = as_f64;
                     field_offset = 1;
                 } else {
                     // Old format without years field - calculate years from step
-                    years = step as f32 * YEARS_PER_STEP;
+                    years = step as f64 * YEARS_PER_STEP;
                 }
             }
             if record.len() > 2 + field_offset {
@@ -1521,7 +1521,7 @@ fn main() {
         initial_central_avg,
         initial_south_avg,
         prior_elapsed_secs,
-    ) = if let Some(resume_path) = args.resume {
+    ): (Vec<Vec<Hex>>, u32, u32, f64, f32, f32, f32, f32, f32, f32, f64) = if let Some(resume_path) = args.resume {
         // Resume from save file
         println!("Resuming simulation from: {}", resume_path);
         let (
@@ -1666,9 +1666,10 @@ fn main() {
                         );
 
                         let basin_factor = 1.0 - (distance_from_basins / TRANSITION_PERIOD as f32).clamp(0.0, 1.0);
-                        let highlands_factor = 1.0 - ((local_north_desert_height - deviated_y) as f32 / TRANSITION_PERIOD as f32).clamp(0.0, 1.0);
+                        let highlands_factor = 1.0 - ((local_north_desert_height - deviated_y) as f32 / (local_north_desert_height as f32- local_river_y)).clamp(0.0, 1.0);
+                        let highlands_boundary_factor = 1.0 - ((local_north_desert_height - deviated_y) as f32 / TRANSITION_PERIOD as f32).clamp(0.0, 1.0);
                         let northeast_factor = 1.0 - (distance_from_coast.abs() / TRANSITION_PERIOD as f32).min(deviated_y as f32 / local_river_y as f32).clamp(0.0, 1.0);
-                        let boundary_factor = get_boundary_factor(northeast_factor.max(basin_factor).max(highlands_factor));
+                        let boundary_factor = get_boundary_factor(northeast_factor.max(basin_factor).max(highlands_boundary_factor));
 
                         // let plateau_height = local_north_desert_height.min(MIN_NORTH_DESERT_HEIGHT + TRANSITION_PERIOD as usize);
                         // let plateau_factor = if deviated_y < plateau_height {
@@ -1679,7 +1680,7 @@ fn main() {
                         let southwest_factor = basin_factor.max(highlands_factor);
 
                         min_inland_elevation = pick_value_from_range(boundary_factor, LAKE_MIN_ELEVATION, BOUNDARY_ELEVATION);
-                        max_inland_elevation = pick_value_from_range(southwest_factor, FAR_NORTH_DESERT_MAX_ELEVATION, NORTH_DESERT_MAX_ELEVATION);
+                        max_inland_elevation = pick_value_from_range(northeast_factor, BOUNDARY_ELEVATION, FAR_NORTH_DESERT_MAX_ELEVATION).max(pick_value_from_range(southwest_factor, BOUNDARY_ELEVATION, NORTH_DESERT_MAX_ELEVATION));
 
                         let (cx1, cy1) = hex_coordinates_to_cartesian(x as i32, deviated_y as i32);
                         let (cx2, cy2) = hex_coordinates_to_cartesian(
@@ -1757,6 +1758,7 @@ fn main() {
                 if x < BASIN_X_BOUNDARY {
                     rainfall =
                         get_rainfall_inches(y, distance_from_coast, distance_from_basins) / 12.0;
+                    elevation += get_white_noise(seed, x, y) * 0.01 * HEX_SIZE;
                 }
 
                 if x > BASIN_X_BOUNDARY {
@@ -2006,7 +2008,7 @@ fn main() {
             hex_map,
             seed,
             0,
-            0.0, // starting_years
+            0.0f64, // starting_years
             initial_max_elevation,
             initial_avg_elevation,
             initial_sea_avg_elevation,
