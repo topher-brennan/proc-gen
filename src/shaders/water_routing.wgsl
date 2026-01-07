@@ -156,26 +156,49 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    // === Compute my outflow to my destination ===
-    if (my_dest != NO_TARGET) {
-        let dest_hex = hex_data[my_dest];
-        let outflow = compute_outflow(my_hex, dest_hex);
-        
-        new_water -= outflow.x;
-        new_load -= outflow.y;
-        new_water_residual -= outflow.z;
-        new_load_residual -= outflow.w;
+    // Calculate flow
+    if (target_x != x || target_y != y) {
+        let target_index = get_hex_index(target_x, target_y);
+        let target_hex = hex_data[target_index];
+        let diff = height(hex) - height(target_hex);
+
+        let move_f = calculate_flow(f, diff);
+
+        if (move_f > 0.0) {
+            var water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
+            var residual_water_outflow = 0.0;
+            var load_outflow = sediment_fraction(hex) * move_f;
+            var residual_load_outflow = 0.0;
+            
+            // Residual moves proportionally to how much water moves relative to total water
+            if (water_outflow < 1.0 / 512.0) {
+                residual_water_outflow = water_outflow;
+                water_outflow = 0.0;
+            }
+
+            if (load_outflow < 1.0 / 512.0) {
+                residual_load_outflow = load_outflow;
+                load_outflow = 0.0;
+            }
+
+            // Convert to fixed-point and use atomicAdd (single operation, no spinning!)
+            // This is MUCH faster than the previous atomicCompareExchangeWeak loops
+            let water_outflow_fixed = to_fixed_point(water_outflow);
+            let load_outflow_fixed = to_fixed_point(load_outflow);
+            let residual_water_outflow_fixed = to_fixed_point(residual_water_outflow);
+            let residual_load_outflow_fixed = to_fixed_point(residual_load_outflow);
+
+            // Subtract outflow from our own next buffers
+            atomicSub(&next_water[index], water_outflow_fixed);
+            atomicSub(&next_load[index], load_outflow_fixed);
+            atomicSub(&next_water_residual[index], residual_water_outflow_fixed);
+            atomicSub(&next_load_residual[index], residual_load_outflow_fixed);
+
+            // Add inflow to target's next buffers
+            atomicAdd(&next_water[target_index], water_outflow_fixed);
+            atomicAdd(&next_load[target_index], load_outflow_fixed);
+            atomicAdd(&next_water_residual[target_index], residual_water_outflow_fixed);
+            atomicAdd(&next_load_residual[target_index], residual_load_outflow_fixed);
+        }
     }
-    
-    // === Write results (no atomics needed - each thread writes to its own cell) ===
-    // Copy all fields from source, then update water/load
-    next_hex_data[index].elevation = my_hex.elevation;
-    next_hex_data[index].elevation_residual = my_hex.elevation_residual;
-    next_hex_data[index].water_depth = max(new_water, 0.0);
-    next_hex_data[index].water_depth_residual = new_water_residual;
-    next_hex_data[index].suspended_load = max(new_load, 0.0);
-    next_hex_data[index].suspended_load_residual = new_load_residual;
-    next_hex_data[index].rainfall = my_hex.rainfall;
-    next_hex_data[index].erosion_multiplier = my_hex.erosion_multiplier;
-    next_hex_data[index].uplift = my_hex.uplift;
 }
