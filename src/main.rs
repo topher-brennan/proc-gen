@@ -440,7 +440,8 @@ fn simulate_erosion(
     let round_size = get_round_size();
 
     // TODO: Currently dividing by 1000 to compensate for heartbeat not working, really need to fix that.
-    let log_steps = round_size as u32 * LOG_ROUNDS / 100;
+    let log_steps = round_size as u32 * LOG_ROUNDS;
+    let heartbeat_steps = round_size as u32 * HEARTBEAT_ROUNDS;
 
     let mut years = starting_years;
 
@@ -781,7 +782,7 @@ fn simulate_erosion(
                 eprintln!("Warning: Failed to save terrain{}.png: {}", tag, e);
             }
             // Only save CSV every 100 rounds to avoid performance issues
-            if step % (100 * log_steps) == 0 {
+            if step % (SAVE_LOGS * log_steps) == 0 {
                 let total_elapsed_secs = prior_elapsed_secs + water_start.elapsed().as_secs_f64();
                 if let Err(e) = save_simulation_state_csv(
                     &format!("terrain{tag}.csv", tag = tag),
@@ -800,7 +801,7 @@ fn simulate_erosion(
                     eprintln!("Warning: Failed to save terrain{}.csv: {}", tag, e);
                 }
             }
-        } else if step % (log_steps / 10) == 0 {
+        } else if step % (HEARTBEAT_ROUNDS) == 0 {
             // Sync with GPU periodically to prevent "Parent device is lost" errors.
             // This is much cheaper than downloading data - just waits for work to complete.
             gpu_sim.sync_device();

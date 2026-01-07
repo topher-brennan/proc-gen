@@ -108,4 +108,6 @@ pub const MAX_SLOPE: f32 = 1.0;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.
 pub const MAX_ELEVATION: f32 = SEA_LEVEL + SOUTH_MOUNTAINS_MAX_ELEVATION;
-pub const LOG_ROUNDS: u32 = 100;
+pub const LOG_ROUNDS: u32 = 1;
+pub const SAVE_LOGS: u32 = 100;
+pub const HEARTBEAT_ROUNDS: u32 = 1;
