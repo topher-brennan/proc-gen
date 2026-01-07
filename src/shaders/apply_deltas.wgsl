@@ -24,18 +24,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // Atomically load the f32 delta (stored as u32) and add it to the elevation.
-    let delta_u32 = atomicLoad(&delta_buffer[index]);
-    let delta_f32 = bitcast<f32>(delta_u32);
+    let delta_bits = atomicLoad(&delta_buffer[index]);
+    let delta_f32 = bitcast<f32>(delta_bits);
 
     if (delta_f32 != 0.0) {
-        if (delta_f32) < 512.0 {
+        if (abs(delta_f32) < 512.0) {
             hex_data[index].elevation_residual = hex_data[index].elevation_residual + delta_f32;
         } else {
             hex_data[index].elevation = hex_data[index].elevation + delta_f32;
         }
     }
 
-    // Reset the delta buffer for the next simulation step.
+    // Reset delta buffer
     atomicStore(&delta_buffer[index], 0u);
-} 
+}

@@ -1,7 +1,7 @@
 // Calculates the change in elevation (delta) for each cell based on the angle of repose.
 // If a cell is much higher than a neighbor, it "loses" elevation, and the neighbor "gains" it.
-// This uses atomics to safely handle multiple neighbors trying to modify the same cell's delta.
-// Constants are prepended via include_str! in Rust
+// Uses atomicCompareExchange for f32 values stored as u32 bits.
+// Constants and common.wgsl are prepended via include_str! in Rust
 
 struct Hex {
     elevation: f32,
@@ -20,7 +20,6 @@ var<storage, read> hex_data: array<Hex>;
 @group(0) @binding(1)
 var<storage, read_write> delta_buffer: array<atomic<u32>>;
 
-// Standard hex grid utility functions
 const EVEN_OFFSETS: array<vec2<i32>, 6> = array<vec2<i32>, 6>(vec2<i32>(1,0), vec2<i32>(0,1), vec2<i32>(-1,0), vec2<i32>(0,-1), vec2<i32>(-1,-1), vec2<i32>(1,-1));
 const ODD_OFFSETS: array<vec2<i32>, 6> = array<vec2<i32>, 6>(vec2<i32>(1,0), vec2<i32>(0,1), vec2<i32>(-1,0), vec2<i32>(0,-1), vec2<i32>(-1,1), vec2<i32>(1,1));
 
@@ -55,7 +54,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             case 3u: { offset = select(ODD_OFFSETS[3], EVEN_OFFSETS[3], even_col); }
             case 4u: { offset = select(ODD_OFFSETS[4], EVEN_OFFSETS[4], even_col); }
             case 5u: { offset = select(ODD_OFFSETS[5], EVEN_OFFSETS[5], even_col); }
-            default: {offset = vec2<i32>(0,0);} // should not happen
+            default: {offset = vec2<i32>(0,0);}
         }
         let nx = x + offset.x;
         let ny = y + offset.y;
@@ -66,34 +65,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let diff = elev - neighbor_elev;
 
             if (diff > HEX_SIZE) {
-                // This slope is too steep. Move some elevation.
                 let excess = (diff - HEX_SIZE) / 100.0;
-                var old_val: u32;
-                var new_val: u32;
-                // TODO: Alternatives to busy waiting here?
-                loop {
-                    old_val = atomicLoad(&delta_buffer[index]);
-                    let old_f32 = bitcast<f32>(old_val);
-                    let new_f32 = old_f32 - excess;
-                    new_val = bitcast<u32>(new_f32);
-                    let result = atomicCompareExchangeWeak(&delta_buffer[index], old_val, new_val);
-                    if (result.exchanged) {
-                        break;
+                
+                // Subtract from self (inlined atomic add f32 with -excess)
+                {
+                    var old_bits = atomicLoad(&delta_buffer[index]);
+                    loop {
+                        let old_f32 = bitcast<f32>(old_bits);
+                        let new_f32 = old_f32 - excess;
+                        let new_bits = bitcast<u32>(new_f32);
+                        let result = atomicCompareExchangeWeak(&delta_buffer[index], old_bits, new_bits);
+                        if (result.exchanged) { break; }
+                        old_bits = result.old_value;
                     }
                 }
-                var neighbor_old_val: u32;
-                var neighbor_new_val: u32;
-                loop {
-                    neighbor_old_val = atomicLoad(&delta_buffer[neighbor_index]);
-                    let neighbor_old_f32 = bitcast<f32>(neighbor_old_val);
-                    let neighbor_new_f32 = neighbor_old_f32 + excess;
-                    neighbor_new_val = bitcast<u32>(neighbor_new_f32);
-                    let result = atomicCompareExchangeWeak(&delta_buffer[neighbor_index], neighbor_old_val, neighbor_new_val);
-                    if (result.exchanged) {
-                        break;
+                
+                // Add to neighbor (inlined atomic add f32 with +excess)
+                {
+                    var old_bits = atomicLoad(&delta_buffer[neighbor_index]);
+                    loop {
+                        let old_f32 = bitcast<f32>(old_bits);
+                        let new_f32 = old_f32 + excess;
+                        let new_bits = bitcast<u32>(new_f32);
+                        let result = atomicCompareExchangeWeak(&delta_buffer[neighbor_index], old_bits, new_bits);
+                        if (result.exchanged) { break; }
+                        old_bits = result.old_value;
                     }
                 }
             }
         }
     }
-} 
+}

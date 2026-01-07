@@ -1,6 +1,7 @@
-// Initialize next_water, next_load, and next_water_residual from hex_data at the start of each step
+// Initializes the "next" buffers for water routing from current hex_data values.
 // This allows subsequent shaders to just modify these values rather than
 // having to initialize them in multiple branches
+// NOTE: common.wgsl is prepended via concat! in Rust (provides fixed-point functions)
 
 struct Hex {
     elevation: f32,
@@ -36,10 +37,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // Store as bitcast integers for atomic operations
-    atomicStore(&next_water[index], bitcast<i32>(hex_data[index].water_depth));
-    atomicStore(&next_load[index], bitcast<i32>(hex_data[index].suspended_load));
-    atomicStore(&next_water_residual[index], bitcast<i32>(hex_data[index].water_depth_residual));
-    atomicStore(&next_load_residual[index], bitcast<i32>(hex_data[index].suspended_load_residual));
+    // Store as fixed-point integers for atomic operations
+    // This allows water_routing to use atomicAdd instead of compare-exchange loops
+    atomicStore(&next_water[index], to_fixed_point(hex_data[index].water_depth));
+    atomicStore(&next_load[index], to_fixed_point(hex_data[index].suspended_load));
+    atomicStore(&next_water_residual[index], to_fixed_point(hex_data[index].water_depth_residual));
+    atomicStore(&next_load_residual[index], to_fixed_point(hex_data[index].suspended_load_residual));
 }
-

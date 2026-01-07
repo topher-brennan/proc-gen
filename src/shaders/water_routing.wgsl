@@ -1,5 +1,6 @@
-// Gather-based water routing - NO ATOMICS!
-// Each hex pulls water FROM neighbors that would flow to it.
+// Gather-based water routing using precomputed flow targets.
+// Each hex pulls water FROM neighbors whose flow_target points to it.
+// This eliminates all atomics with minimal extra memory reads.
 // Constants are prepended via include_str! in Rust
 
 struct Hex {
@@ -18,32 +19,13 @@ struct Hex {
 var<storage, read> hex_data: array<Hex>;
 
 @group(0) @binding(1)
-var<storage, read> flow_target: array<u32>;
-
-@group(0) @binding(2)
 var<storage, read_write> next_hex_data: array<Hex>;
 
-const NO_TARGET: u32 = 0xFFFFFFFFu;
+@group(0) @binding(2)
+var<storage, read> flow_target: array<u32>;
 
-// Neighbor offsets for even columns
-const EVEN: array<vec2<i32>, 6> = array<vec2<i32>, 6>(
-    vec2<i32>(1, 0),   // E
-    vec2<i32>(0, 1),   // S
-    vec2<i32>(-1, 0),  // W
-    vec2<i32>(0, -1),  // N
-    vec2<i32>(-1, -1), // NW
-    vec2<i32>(1, -1),  // NE
-);
-
-// Neighbor offsets for odd columns
-const ODD: array<vec2<i32>, 6> = array<vec2<i32>, 6>(
-    vec2<i32>(1, 0),   // E
-    vec2<i32>(0, 1),   // S
-    vec2<i32>(-1, 0),  // W
-    vec2<i32>(0, -1),  // N
-    vec2<i32>(-1, 1),  // SW
-    vec2<i32>(1, 1),   // SE
-);
+@group(0) @binding(3)
+var<storage, read> min_elev: array<f32>;
 
 fn is_valid_coord(x: i32, y: i32) -> bool {
     return x >= 0 && x < i32(WIDTH) && y >= 0 && y < i32(HEIGHT);
@@ -53,16 +35,44 @@ fn get_hex_index(x: i32, y: i32) -> u32 {
     return u32(y * i32(WIDTH) + x);
 }
 
-// Compute what a source hex would send to its destination
-fn compute_outflow(source: Hex, dest: Hex) -> vec4<f32> {
+fn get_offset(k: u32, even: bool) -> vec2<i32> {
+    if (even) {
+        switch(k) {
+            case 0u: { return vec2<i32>(1,0);}   // E
+            case 1u: { return vec2<i32>(0,1);}   // S
+            case 2u: { return vec2<i32>(-1,0);}  // W
+            case 3u: { return vec2<i32>(0,-1);}  // N
+            case 4u: { return vec2<i32>(-1,-1);} // NW
+            case 5u: { return vec2<i32>(1,-1);}  // NE
+            default: { return vec2<i32>(0,0); }
+        }
+    } else {
+        switch(k) {
+            case 0u: { return vec2<i32>(1,0);}   // E
+            case 1u: { return vec2<i32>(0,1);}   // S
+            case 2u: { return vec2<i32>(-1,0);}  // W
+            case 3u: { return vec2<i32>(0,-1);}  // N
+            case 4u: { return vec2<i32>(-1,1);}  // SW
+            case 5u: { return vec2<i32>(1,1);}   // SE
+            default: { return vec2<i32>(0,0); }
+        }
+    }
+}
+
+// Compute outflow from source hex to a destination with given height
+fn compute_outflow(source: Hex, dest_height: f32) -> vec4<f32> {
     let f = total_fluid(source);
     if (f <= 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
-    let diff = height(source) - height(dest);
-    let move_f = calculate_flow(f, diff);
+    let source_h = height(source);
+    let diff = source_h - dest_height;
+    if (diff <= 0.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
     
+    let move_f = calculate_flow(f, diff);
     if (move_f <= 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
@@ -89,20 +99,18 @@ fn compute_outflow(source: Hex, dest: Hex) -> vec4<f32> {
 @compute @workgroup_size(256)
 fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    let width = u32(WIDTH);
-    let height_val = u32(HEIGHT);
-    let total_hexes = width * height_val;
+    let total_hexes = u32(WIDTH * HEIGHT);
     
     if (index >= total_hexes) {
         return;
     }
 
-    let x = i32(index % width);
-    let y = i32(index / width);
-    let even_col = (x & 1) == 0;
+    let x = i32(index % u32(WIDTH));
+    let y = i32(index / u32(WIDTH));
+    let even = (x & 1) == 0;
     
     let my_hex = hex_data[index];
-    let my_dest = flow_target[index];
+    let my_h = height(my_hex);
     
     // Start with current values
     var new_water = my_hex.water_depth;
@@ -110,44 +118,21 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var new_water_residual = my_hex.water_depth_residual;
     var new_load_residual = my_hex.suspended_load_residual;
     
-    // === GATHER: Check each neighbor to see if they flow TO me ===
-    for (var k: u32 = 0u; k < 6u; k = k + 1u) {
-        var off: vec2<i32>;
-        if (even_col) {
-            switch(k) {
-                case 0u: { off = vec2<i32>(1, 0); }
-                case 1u: { off = vec2<i32>(0, 1); }
-                case 2u: { off = vec2<i32>(-1, 0); }
-                case 3u: { off = vec2<i32>(0, -1); }
-                case 4u: { off = vec2<i32>(-1, -1); }
-                case 5u: { off = vec2<i32>(1, -1); }
-                default: {}
-            }
-        } else {
-            switch(k) {
-                case 0u: { off = vec2<i32>(1, 0); }
-                case 1u: { off = vec2<i32>(0, 1); }
-                case 2u: { off = vec2<i32>(-1, 0); }
-                case 3u: { off = vec2<i32>(0, -1); }
-                case 4u: { off = vec2<i32>(-1, 1); }
-                case 5u: { off = vec2<i32>(1, 1); }
-                default: {}
-            }
-        }
-        
+    // === GATHER: Check each neighbor to see if their flow_target is ME ===
+    for (var k = 0u; k < 6u; k = k + 1u) {
+        let off = get_offset(k, even);
         let nx = x + off.x;
         let ny = y + off.y;
         
         if (is_valid_coord(nx, ny)) {
-            let neighbor_idx = get_hex_index(nx, ny);
+            let n_idx = get_hex_index(nx, ny);
             
-            // Does this neighbor flow TO me?
-            if (flow_target[neighbor_idx] == index) {
-                // Yes! Compute what they would send
-                let neighbor_hex = hex_data[neighbor_idx];
-                let inflow = compute_outflow(neighbor_hex, my_hex);
+            // Does this neighbor flow to me?
+            if (flow_target[n_idx] == index) {
+                // Yes! Compute how much water it sends
+                let neighbor_hex = hex_data[n_idx];
+                let inflow = compute_outflow(neighbor_hex, my_h);
                 
-                // Add to our totals
                 new_water += inflow.x;
                 new_load += inflow.y;
                 new_water_residual += inflow.z;
@@ -156,49 +141,26 @@ fn route_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    // Calculate flow
-    if (target_x != x || target_y != y) {
-        let target_index = get_hex_index(target_x, target_y);
-        let target_hex = hex_data[target_index];
-        let diff = height(hex) - height(target_hex);
-
-        let move_f = calculate_flow(f, diff);
-
-        if (move_f > 0.0) {
-            var water_outflow = (1.0 - sediment_fraction(hex)) * move_f;
-            var residual_water_outflow = 0.0;
-            var load_outflow = sediment_fraction(hex) * move_f;
-            var residual_load_outflow = 0.0;
-            
-            // Residual moves proportionally to how much water moves relative to total water
-            if (water_outflow < 1.0 / 512.0) {
-                residual_water_outflow = water_outflow;
-                water_outflow = 0.0;
-            }
-
-            if (load_outflow < 1.0 / 512.0) {
-                residual_load_outflow = load_outflow;
-                load_outflow = 0.0;
-            }
-
-            // Convert to fixed-point and use atomicAdd (single operation, no spinning!)
-            // This is MUCH faster than the previous atomicCompareExchangeWeak loops
-            let water_outflow_fixed = to_fixed_point(water_outflow);
-            let load_outflow_fixed = to_fixed_point(load_outflow);
-            let residual_water_outflow_fixed = to_fixed_point(residual_water_outflow);
-            let residual_load_outflow_fixed = to_fixed_point(residual_load_outflow);
-
-            // Subtract outflow from our own next buffers
-            atomicSub(&next_water[index], water_outflow_fixed);
-            atomicSub(&next_load[index], load_outflow_fixed);
-            atomicSub(&next_water_residual[index], residual_water_outflow_fixed);
-            atomicSub(&next_load_residual[index], residual_load_outflow_fixed);
-
-            // Add inflow to target's next buffers
-            atomicAdd(&next_water[target_index], water_outflow_fixed);
-            atomicAdd(&next_load[target_index], load_outflow_fixed);
-            atomicAdd(&next_water_residual[target_index], residual_water_outflow_fixed);
-            atomicAdd(&next_load_residual[target_index], residual_load_outflow_fixed);
-        }
+    // === Compute my outflow to my target ===
+    let my_target = flow_target[index];
+    if (my_target != index) {
+        // I flow to someone else
+        let dest_height = min_elev[index];
+        let outflow = compute_outflow(my_hex, dest_height);
+        new_water -= outflow.x;
+        new_load -= outflow.y;
+        new_water_residual -= outflow.z;
+        new_load_residual -= outflow.w;
     }
+    
+    // === Write results (no atomics - each thread writes only to its own cell) ===
+    next_hex_data[index].elevation = my_hex.elevation;
+    next_hex_data[index].elevation_residual = my_hex.elevation_residual;
+    next_hex_data[index].water_depth = max(new_water, 0.0);
+    next_hex_data[index].water_depth_residual = new_water_residual;
+    next_hex_data[index].suspended_load = max(new_load, 0.0);
+    next_hex_data[index].suspended_load_residual = new_load_residual;
+    next_hex_data[index].rainfall = my_hex.rainfall;
+    next_hex_data[index].erosion_multiplier = my_hex.erosion_multiplier;
+    next_hex_data[index].uplift = my_hex.uplift;
 }

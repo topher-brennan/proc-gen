@@ -1,3 +1,5 @@
+// NOTE: common.wgsl is prepended via concat! in Rust (provides fixed-point functions)
+
 struct Hex {
     elevation: f32,
     elevation_residual: f32,
@@ -28,8 +30,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
     if(index >= arrayLength(&hex_data)) { return; }
 
-    hex_data[index].water_depth = max(bitcast<f32>(atomicLoad(&next_water[index])), 0.0);
-    hex_data[index].suspended_load = max(bitcast<f32>(atomicLoad(&next_load[index])), 0.0);
-    hex_data[index].water_depth_residual = bitcast<f32>(atomicLoad(&next_water_residual[index]));
-    hex_data[index].suspended_load_residual = bitcast<f32>(atomicLoad(&next_load_residual[index]));
-} 
+    // Convert from fixed-point back to float
+    hex_data[index].water_depth = max(from_fixed_point(atomicLoad(&next_water[index])), 0.0);
+    hex_data[index].suspended_load = max(from_fixed_point(atomicLoad(&next_load[index])), 0.0);
+    hex_data[index].water_depth_residual = from_fixed_point(atomicLoad(&next_water_residual[index]));
+    hex_data[index].suspended_load_residual = from_fixed_point(atomicLoad(&next_load_residual[index]));
+}

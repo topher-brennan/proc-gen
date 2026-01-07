@@ -218,7 +218,7 @@ fn let_slopes_settle(hex_map: &mut Vec<Vec<Hex>>) {
     for _ in 0..400 {
         // This is the only place this function is called,
         // may create opportunities for refactoring.
-        gpu_sim.run_repose_step(width, height);
+        gpu_sim.run_repose_pass(width, height);
     }
 
     download_hex_data(&gpu_sim, hex_map);

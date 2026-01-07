@@ -1,7 +1,7 @@
-// Computes the flow target index AND minimum neighbor elevation for each hex cell.
-// Outputs:
-//   - flow_target[index]: index of lowest neighbour, or NO_TARGET if local minimum
-//   - min_elev[index]: the minimum neighbour height (for erosion calculations)
+// Computes the minimum neighbour elevation and flow target for each hex cell.
+// Output: 
+//   min_elev[index] = lowest neighbour height (including self)
+//   flow_target[index] = index of lowest neighbor (or self if no lower neighbor)
 // Constants are prepended via include_str! in Rust
 
 struct Hex {
@@ -19,21 +19,9 @@ struct Hex {
 @group(0) @binding(0)
 var<storage, read> hex_data: array<Hex>;
 @group(0) @binding(1)
-var<storage, read_write> flow_target: array<u32>;
-@group(0) @binding(2)
 var<storage, read_write> min_elev: array<f32>;
-
-const NO_TARGET: u32 = 0xFFFFFFFFu;
-
-// Neighbour offsets for even/odd columns (columns-line-up layout)
-const EVEN : array<vec2<i32>, 6> = array<vec2<i32>, 6>(
-    vec2<i32>( 1, 0), vec2<i32>( 0, 1), vec2<i32>(-1, 0),
-    vec2<i32>( 0,-1), vec2<i32>(-1,-1), vec2<i32>( 1,-1)
-);
-const ODD  : array<vec2<i32>, 6> = array<vec2<i32>, 6>(
-    vec2<i32>( 1, 0), vec2<i32>( 0, 1), vec2<i32>(-1, 0),
-    vec2<i32>( 0,-1), vec2<i32>(-1, 1), vec2<i32>( 1, 1)
-);
+@group(0) @binding(2)
+var<storage, read_write> flow_target: array<u32>;
 
 fn inside(x:i32, y:i32) -> bool {
     return x >= 0 && y >= 0 && x < i32(WIDTH) && y < i32(HEIGHT);
@@ -41,6 +29,30 @@ fn inside(x:i32, y:i32) -> bool {
 
 fn idx(x:i32, y:i32) -> u32 {
     return u32(y * i32(WIDTH) + x);
+}
+
+fn get_offset(k: u32, even: bool) -> vec2<i32> {
+    if (even) {
+        switch(k) {
+            case 0u: { return vec2<i32>(1,0);}   // E
+            case 1u: { return vec2<i32>(0,1);}   // S
+            case 2u: { return vec2<i32>(-1,0);}  // W
+            case 3u: { return vec2<i32>(0,-1);}  // N
+            case 4u: { return vec2<i32>(-1,-1);} // NW
+            case 5u: { return vec2<i32>(1,-1);}  // NE
+            default: { return vec2<i32>(0,0); }
+        }
+    } else {
+        switch(k) {
+            case 0u: { return vec2<i32>(1,0);}   // E
+            case 1u: { return vec2<i32>(0,1);}   // S
+            case 2u: { return vec2<i32>(-1,0);}  // W
+            case 3u: { return vec2<i32>(0,-1);}  // N
+            case 4u: { return vec2<i32>(-1,1);}  // SW
+            case 5u: { return vec2<i32>(1,1);}   // SE
+            default: { return vec2<i32>(0,0); }
+        }
+    }
 }
 
 @compute @workgroup_size(256)
@@ -52,45 +64,23 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
     let x = i32(index % u32(WIDTH));
     let y = i32(index / u32(WIDTH));
 
-    var min_h = height(hex_data[index]);
-    var dest_idx = NO_TARGET;
+    var m = height(hex_data[index]);
+    var target_idx = index;  // Default: flow to self (no lower neighbor)
     let even = (x & 1) == 0;
 
     for (var k:u32 = 0u; k < 6u; k = k + 1u) {
-        var off : vec2<i32> = vec2<i32>(0,0);
-        if (even) {
-            switch(k) {
-                case 0u: { off = vec2<i32>(1,0);}  // E
-                case 1u: { off = vec2<i32>(0,1);}  // S
-                case 2u: { off = vec2<i32>(-1,0);} // W
-                case 3u: { off = vec2<i32>(0,-1);} // N
-                case 4u: { off = vec2<i32>(-1,-1);} // NW
-                case 5u: { off = vec2<i32>(1,-1);}  // NE
-                default: {}
-            }
-        } else {
-            switch(k) {
-                case 0u: { off = vec2<i32>(1,0);}  // E
-                case 1u: { off = vec2<i32>(0,1);}  // S
-                case 2u: { off = vec2<i32>(-1,0);} // W
-                case 3u: { off = vec2<i32>(0,-1);} // N
-                case 4u: { off = vec2<i32>(-1,1);}  // SW
-                case 5u: { off = vec2<i32>(1,1);}   // SE
-                default: {}
-            }
-        }
+        let off = get_offset(k, even);
         let nx = x + off.x;
         let ny = y + off.y;
         if (!inside(nx, ny)) { continue; }
-        
-        let neighbor_idx = idx(nx, ny);
-        let h = height(hex_data[neighbor_idx]);
-        if (h < min_h) { 
-            min_h = h; 
-            dest_idx = neighbor_idx;
+        let n_idx = idx(nx, ny);
+        let elev = height(hex_data[n_idx]);
+        if (elev < m) {
+            m = elev;
+            target_idx = n_idx;
         }
     }
 
-    flow_target[index] = dest_idx;
-    min_elev[index] = min_h;
+    min_elev[index] = m;
+    flow_target[index] = target_idx;
 }
