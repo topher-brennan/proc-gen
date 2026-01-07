@@ -1,5 +1,7 @@
-// Computes the minimum neighbour elevation for each hex cell.
-// Output: min_elev[index] holds the lowest neighbour elevation (including self).
+// Computes the flow target index AND minimum neighbor elevation for each hex cell.
+// Outputs:
+//   - flow_target[index]: index of lowest neighbour, or NO_TARGET if local minimum
+//   - min_elev[index]: the minimum neighbour height (for erosion calculations)
 // Constants are prepended via include_str! in Rust
 
 struct Hex {
@@ -17,7 +19,11 @@ struct Hex {
 @group(0) @binding(0)
 var<storage, read> hex_data: array<Hex>;
 @group(0) @binding(1)
+var<storage, read_write> flow_target: array<u32>;
+@group(0) @binding(2)
 var<storage, read_write> min_elev: array<f32>;
+
+const NO_TARGET: u32 = 0xFFFFFFFFu;
 
 // Neighbour offsets for even/odd columns (columns-line-up layout)
 const EVEN : array<vec2<i32>, 6> = array<vec2<i32>, 6>(
@@ -46,7 +52,8 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
     let x = i32(index % u32(WIDTH));
     let y = i32(index / u32(WIDTH));
 
-    var m = height(hex_data[index]);
+    var min_h = height(hex_data[index]);
+    var dest_idx = NO_TARGET;
     let even = (x & 1) == 0;
 
     for (var k:u32 = 0u; k < 6u; k = k + 1u) {
@@ -75,9 +82,15 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
         let nx = x + off.x;
         let ny = y + off.y;
         if (!inside(nx, ny)) { continue; }
-        let elev = height(hex_data[idx(nx, ny)]);
-        if (elev < m) { m = elev; }
+        
+        let neighbor_idx = idx(nx, ny);
+        let h = height(hex_data[neighbor_idx]);
+        if (h < min_h) { 
+            min_h = h; 
+            dest_idx = neighbor_idx;
+        }
     }
 
-    min_elev[index] = m;
-} 
+    flow_target[index] = dest_idx;
+    min_elev[index] = min_h;
+}
