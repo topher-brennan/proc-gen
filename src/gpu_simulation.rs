@@ -344,7 +344,12 @@ impl GpuSimulation {
 
         let eros_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("erosion BGL"),
-            entries: &[buf_rw!(0, false), buf_rw!(1, true), buf_rw!(2, false), uniform_entry!(3)],
+            entries: &[
+                buf_rw!(0, false),
+                buf_rw!(1, true),
+                buf_rw!(2, false),
+                uniform_entry!(3),
+            ],
         });
 
         let eros_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
