@@ -449,6 +449,7 @@ fn simulate_erosion(
         let step = starting_step + step_offset;
         let seasonal_rain_multiplier =
             1.0 + (years * 2.0 * std::f64::consts::PI + std::f64::consts::PI).cos();
+        current_sea_level = BASE_SEA_LEVEL + 0.02 * years as f32;
 
         if step % log_steps == 0 {
             let gpu_hex_data = gpu_sim.download_hex_data();
@@ -816,7 +817,6 @@ fn simulate_erosion(
             current_sea_level + tidal_adjustment,
             seasonal_rain_multiplier as f32,
         );
-        current_sea_level = BASE_SEA_LEVEL + 0.02 * years as f32;
         years += YEARS_PER_STEP;
     }
 
