@@ -108,9 +108,9 @@ fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> f32 {
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
-    if elevation < BASE_SEA_LEVEL {
+    if elevation < -1.0 * HIGH_WATER_THRESHOLD {
         let normalized_elevation =
-            ((elevation - ABYSSAL_PLAINS_MAX_DEPTH) / (-1.0 * ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
+            ((elevation + HIGH_WATER_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH) / (HIGH_WATER_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
@@ -121,6 +121,13 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
             let blue = 255;
             Rgb([red, green, blue])
         }
+    } else if elevation < BASE_SEA_LEVEL {
+        let normalized_elevation = elevation / HIGH_WATER_THRESHOLD;
+        // Green to light blue
+        let red = 0;
+        let green = 255;
+        let blue = (255.0 * (1.0 + normalized_elevation)) as u8;
+        Rgb([red, green, blue])
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
         let land_height = elevation;
@@ -395,6 +402,23 @@ fn fill_sea(hex_map: &mut Vec<Vec<Hex>>) {
     }
 }
 
+// Find deepest_y as the y of hex with greatest water depth where y < MIN_NORTH_DESERT_HEIGHT and x = target_x
+fn find_deepest_y_for_desert_x(hex_map: &Vec<Vec<Hex>>, target_x: usize, default_y: usize) -> usize {
+    let deepest_y = hex_map
+        .par_iter()
+        .enumerate()
+        .take(MIN_NORTH_DESERT_HEIGHT)
+        .filter_map(|(y, row)| {
+            row.get(target_x)
+                .filter(|hex| hex.water_depth > LOW_WATER_THRESHOLD)
+                .map(|hex| (y, hex.water_depth))
+        })
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+        .map(|(y, _)| y)
+        .unwrap_or(default_y);
+    deepest_y
+}
+
 fn simulate_erosion(
     hex_map: &mut Vec<Vec<Hex>>,
     steps: u32,
@@ -516,33 +540,12 @@ fn simulate_erosion(
 
             let wet_cells_percentage = wet_cells as f64 / cells_above_sea_level as f64 * 100.0;
 
-            // Find source_y as the y of hex with greatest water depth where y < MIN_NORTH_DESERT_HEIGHT and x = RIVER_SOURCE_X
-            let source_y: usize = hex_map
-                .par_iter()
-                .enumerate()
-                .take(MIN_NORTH_DESERT_HEIGHT)
-                .filter_map(|(y, row)| {
-                    row.get(RIVER_SOURCE_X)
-                        .filter(|hex| {
-                            hex.elevation > current_sea_level
-                                && hex.water_depth > LOW_WATER_THRESHOLD
-                        })
-                        .map(|hex| (y, hex.water_depth))
-                })
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
-                .map(|(y, _)| y)
-                .unwrap_or(OUTLET_Y);
+            let source_y: usize = find_deepest_y_for_desert_x(hex_map, RIVER_SOURCE_X, OUTLET_Y);
+            let outlet_y: usize = find_deepest_y_for_desert_x(hex_map, TOTAL_SEA_WIDTH, OUTLET_Y);
 
             let source_hex = &hex_map[source_y][RIVER_SOURCE_X];
-            let outlet_hex = &hex_map[OUTLET_Y][TOTAL_SEA_WIDTH];
+            let outlet_hex = &hex_map[outlet_y][TOTAL_SEA_WIDTH];
             let target_delta_hex = &hex_map[OUTLET_Y][TOTAL_SEA_WIDTH - 231];
-
-            // The more the hex we want to be the edge of the delta is dry, the more we want
-            // we want to bring the sea level up to match.
-            // TODO: Is there an inexpensive way to download this every step?
-            // if target_delta_hex.elevation - target_delta_hex.water_depth > current_sea_level {
-            //     current_sea_level = target_delta_hex.elevation - target_delta_hex.water_depth;
-            // }
 
             let round = step / (round_size as u32);
 
@@ -736,6 +739,29 @@ fn simulate_erosion(
                 central_avg, central_avg / initial_central_avg * 100.0,
                 south_avg, south_avg / initial_south_avg * 100.0,
             );
+
+            // Find westernmost continental hex for y < MIN_NORTH_DESERT_HEIGHT
+            let westernmost_north_continental_x: Option<usize> = {
+                let mut min_x: Option<usize> = None;
+                for y in 0..MIN_NORTH_DESERT_HEIGHT {
+                    for x in 0..WIDTH_HEXAGONS {
+                        if continental[y][x] {
+                            min_x = Some(match min_x {
+                                Some(current_min) => current_min.min(x),
+                                None => x,
+                            });
+                        }
+                    }
+                }
+                min_x
+            };
+            if let Some(westernmost_x) = westernmost_north_continental_x {
+                let hexes_west_of_outlet = TOTAL_SEA_WIDTH as i32 - westernmost_x as i32;
+                println!(
+                    "  delta edge: {} hexes west of outlet",
+                    hexes_west_of_outlet
+                );
+            }
             println!(
                 "  sea:  max {:.3} ft  avg {:.3} ft ({:.3}, {:.1}%)  min {:.3} ft  time: {:?}",
                 max_sea_elevation - current_sea_level,
@@ -1361,53 +1387,45 @@ fn get_simplex_noise_for_hex(simplex: &Simplex, x: f64, y: f64, period: f64) -> 
     (simplex.get([x * HEX_FACTOR as f64 / period, adjusted_y / period]) as f32 + 1.0) / 2.0
 }
 
+const NOISE_PERIODS_AND_WEIGHTS: [(f64, f32); 6] = [
+    (
+        (MIN_NORTH_DESERT_HEIGHT_F
+            .min(CENTRAL_HIGHLAND_HEIGHT_F)
+            .min(SOUTH_MOUNTAINS_HEIGHT_F)
+            - TRANSITION_PERIOD) as f64
+            / 2.0,
+        1.0 / 16.0,
+    ),
+    (TRANSITION_PERIOD as f64, 1.0),
+    (COAST_WIDTH_F as f64, 1.0),
+    (DEVIATION_PERIOD as f64, 1.0),
+    (12.0, 1.0 / 16.0),
+    (2.0, 1.0 / 48.0),
+];
+
 fn get_simplex_noise_map(simplex: &Simplex) -> Vec<Vec<f32>> {
     let mut noise_map = Vec::new();
     for y in 0..HEIGHT_PIXELS {
         let mut row = Vec::new();
         for x in 0..WIDTH_HEXAGONS {
-            let region_noise = get_simplex_noise_for_hex(
-                &simplex,
-                x as f64,
-                y as f64,
-                (MIN_NORTH_DESERT_HEIGHT_F
-                    .min(CENTRAL_HIGHLAND_HEIGHT_F)
-                    .min(SOUTH_MOUNTAINS_HEIGHT_F)
-                    - TRANSITION_PERIOD) as f64
-                    / 2.0,
-            );
-            let transition_period_noise = get_simplex_noise_for_hex(
-                &simplex,
-                x as f64 + WIDTH_HEXAGONS_F as f64,
-                y as f64,
-                TRANSITION_PERIOD as f64,
-            );
-            let coastal_noise = get_simplex_noise_for_hex(
-                &simplex,
-                x as f64 + WIDTH_HEXAGONS_F as f64 * 2.0,
-                y as f64,
-                COAST_WIDTH_F as f64,
-            );
-            let deviation_noise = get_simplex_noise_for_hex(
-                &simplex,
-                x as f64 + WIDTH_HEXAGONS_F as f64 * 3.0,
-                y as f64,
-                DEVIATION_PERIOD as f64,
-            );
-            let simplex_noise =
-                ((transition_period_noise + coastal_noise + region_noise + deviation_noise) / 4.0)
-                    .powf(3.0_f32.sqrt());
+            let mut simplex_noise = 0.0;
+            for (i, (period, weight)) in NOISE_PERIODS_AND_WEIGHTS.iter().enumerate() {
+                simplex_noise += get_simplex_noise_for_hex(
+                    &simplex,
+                    (x + WIDTH_HEXAGONS * i) as f64,
+                    y as f64,
+                    *period,
+                ) * weight;
+            }
+            simplex_noise /= NOISE_PERIODS_AND_WEIGHTS
+                .iter()
+                .map(|(_, weight)| weight)
+                .sum::<f32>();
+            simplex_noise = simplex_noise.powf(3.0);
 
             if simplex_noise < 0.0 || simplex_noise > 1.0 {
                 println!("Simplex noise out of range: {}", simplex_noise);
-                println!(
-                    "x: {}, y: {}, TRANSITION_PERIOD: {}, COAST_WIDTH: {}",
-                    x, y, TRANSITION_PERIOD, COAST_WIDTH
-                );
-                println!(
-                    "region_noise: {}, transition_period_noise: {}, coastal_noise: {}",
-                    region_noise, transition_period_noise, coastal_noise
-                );
+                println!("x: {}, y: {}", x, y);
                 panic!("Simplex noise out of range");
             }
 
@@ -1462,8 +1480,7 @@ fn get_rainfall_inches(y: usize, distance_from_coast: f32, distance_from_basins:
 
     result = result.clamp(0.0, 20.0);
 
-    let factor = ((144.0 / HEX_FACTOR as f32 - distance_from_coast.min(distance_from_basins))
-        / (144.0 / HEX_FACTOR as f32))
+    let factor = ((COAST_WIDTH_F - distance_from_coast.min(distance_from_basins)) / COAST_WIDTH_F)
         .clamp(0.0, 1.0);
     result *= 1.0 + factor * 2.0;
     result
@@ -1623,6 +1640,13 @@ fn main() {
                     -1.0 * (distance_from_coast / NO_ISLANDS_ZONE_WIDTH_F).clamp(-1.0, 0.0);
                 let distance_from_basins = BASIN_X_BOUNDARY_F - x_f;
 
+                let local_boundary_min = pick_value_from_range(
+                    ((deviated_y_f - MIN_NORTH_DESERT_HEIGHT_F) / CENTRAL_HIGHLAND_HEIGHT_F)
+                        .clamp(0.0, 1.0),
+                    BOUNDARY_ELEVATION,
+                    BOUNDARY_ELEVATION * 1.5,
+                );
+
                 // Use floating-point division to avoid stepped/banded artifacts
                 let diagonal_offset =
                     CENTRAL_HIGHLAND_HEIGHT_F * (x_f - TOTAL_SEA_WIDTH_F) / NORTH_DESERT_WIDTH_F;
@@ -1631,7 +1655,7 @@ fn main() {
                     MIN_NORTH_DESERT_HEIGHT_F + deviated_y_f - diagonally_deviated_y_f;
 
                 let simplex_noise = noise_map[y][x];
-                let mut abyssal_plains_depth_adjustment = 0.9;
+                let mut abyssal_plains_depth_adjustment = BASE_DEPTH_ADJUSTMENT;
 
                 if deviated_x_f < TOTAL_SEA_WIDTH_F - TRANSITION_PERIOD {
                     // TODO: Ugh this whole section is ugly, could definitely simplify.
@@ -1641,14 +1665,14 @@ fn main() {
                         abyssal_plains_depth_adjustment += 0.1 * factor;
                         local_max = ISLANDS_MAX_ELEVATION * factor;
                         elevation = pick_value_from_range(
-                            simplex_noise,
+                            simplex_noise.powf(1.0 - 0.42 * slow_coast_factor),
                             ABYSSAL_PLAINS_MAX_DEPTH * abyssal_plains_depth_adjustment,
                             local_max,
                         );
                     } else {
                         local_max = 0.0;
                         elevation = pick_value_from_range(
-                            simplex_noise,
+                            simplex_noise.powf(1.0 - 0.42 * slow_coast_factor),
                             ABYSSAL_PLAINS_MAX_DEPTH
                                 * abyssal_plains_depth_adjustment
                                 * slow_coast_factor,
@@ -1696,16 +1720,16 @@ fn main() {
                         min_inland_elevation = pick_value_from_range(
                             boundary_factor,
                             LAKE_MIN_ELEVATION,
-                            BOUNDARY_ELEVATION,
+                            local_boundary_min,
                         );
                         max_inland_elevation = pick_value_from_range(
                             northeast_factor,
-                            BOUNDARY_ELEVATION,
+                            local_boundary_min,
                             FAR_NORTH_DESERT_MAX_ELEVATION,
                         )
                         .max(pick_value_from_range(
                             southwest_factor,
-                            BOUNDARY_ELEVATION,
+                            local_boundary_min,
                             NORTH_DESERT_MAX_ELEVATION,
                         ));
 
@@ -1735,9 +1759,9 @@ fn main() {
                             - deviated_y_f)
                             / TRANSITION_PERIOD)
                             .clamp(0.0, 1.0);
-                        min_inland_elevation = (LAKE_MIN_ELEVATION - BOUNDARY_ELEVATION)
+                        min_inland_elevation = (LAKE_MIN_ELEVATION - local_boundary_min)
                             * get_boundary_factor(factor1.min(factor2))
-                            + BOUNDARY_ELEVATION;
+                            + local_boundary_min;
                         max_inland_elevation =
                             (CENTRAL_HIGHLAND_MAX_ELEVATION - NORTH_DESERT_MAX_ELEVATION) * factor1
                                 + NORTH_DESERT_MAX_ELEVATION;
@@ -1757,7 +1781,7 @@ fn main() {
                         min_inland_elevation = pick_value_from_range(
                             1.0 - factor,
                             LAKE_MIN_ELEVATION,
-                            BOUNDARY_ELEVATION,
+                            local_boundary_min,
                         );
                         max_inland_elevation =
                             pick_value_from_range(factor, max0, SOUTH_MOUNTAINS_MAX_ELEVATION);
@@ -1835,8 +1859,9 @@ fn main() {
                 }
 
                 if elevation > 0.0 {
-                    uplift = (0.02 + RAIN_BASED_UPLIFT_FACTOR * rainfall)
-                        * (elevation / local_max).min(local_min / BOUNDARY_ELEVATION).max(1.0);
+                    uplift = (elevation / local_max)
+                            .min(local_min / local_boundary_min)
+                            .max(1.0);
                 }
 
                 if uplift.is_nan() {
@@ -1853,31 +1878,25 @@ fn main() {
                     suspended_load: 0.0,
                     rainfall,
                     // TODO: Fiddle with range, seems to help with coastlines and mountains but may make chanelization worse.
-                    erosion_multiplier: 0.5
-                        + get_simplex_noise_for_hex(
-                            &simplex,
-                            x as f64,
-                            (y + HEIGHT_PIXELS * 2) as f64,
-                            1.0,
-                        ) * 0.25
+                    erosion_multiplier: 0.7
                         + get_simplex_noise_for_hex(
                             &simplex,
                             (x + WIDTH_HEXAGONS) as f64,
                             (y + HEIGHT_PIXELS * 2) as f64,
                             3.0,
-                        ) * 0.25
+                        ) * 0.2
                         + get_simplex_noise_for_hex(
                             &simplex,
                             (x + WIDTH_HEXAGONS * 2) as f64,
                             (y + HEIGHT_PIXELS * 2) as f64,
                             7.0,
-                        ) * 0.25
+                        ) * 0.2
                         + get_simplex_noise_for_hex(
                             &simplex,
                             (x + WIDTH_HEXAGONS * 3) as f64,
                             (y + HEIGHT_PIXELS * 2) as f64,
                             29.0,
-                        ) * 0.25,
+                        ) * 0.2,
                     uplift,
                 });
             }

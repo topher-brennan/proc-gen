@@ -14,7 +14,7 @@ pub const WIDTH_HEXAGONS_F: f32 = WIDTH_PIXELS as f32 / HEX_FACTOR;
 pub const WIDTH_HEXAGONS: usize = (WIDTH_HEXAGONS_F + 0.5) as usize;
 
 pub const DAYS_PER_YEAR: f64 = 365.2422;
-pub const STEPS_PER_DAY: f64 = 24.0 * 20.0;
+pub const STEPS_PER_DAY: f64 = 12.0;
 pub const YEARS_PER_STEP: f64 = 1.0 / DAYS_PER_YEAR / STEPS_PER_DAY;
 // Above numbers are in inches per year, this can be adjusted to e.g. feet per year.
 pub const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
@@ -58,6 +58,7 @@ pub const TOTAL_LAND_WIDTH_F: f32 = NE_BASIN_WIDTH_F + NORTH_DESERT_WIDTH_F;
 pub const TOTAL_LAND_WIDTH: usize = NE_BASIN_WIDTH + NORTH_DESERT_WIDTH;
 
 pub const ABYSSAL_PLAINS_MAX_DEPTH: f32 = -16_800.0;
+pub const BASE_DEPTH_ADJUSTMENT: f32 = 0.85;
 pub const LAKE_MIN_ELEVATION: f32 = 0.0;
 pub const TOTAL_SEA_WIDTH_F: f32 = WIDTH_HEXAGONS_F - TOTAL_LAND_WIDTH_F;
 pub const TOTAL_SEA_WIDTH: usize = WIDTH_HEXAGONS - TOTAL_LAND_WIDTH;
@@ -82,7 +83,7 @@ pub const BOUNDARY_ELEVATION: f32 = 2000.0;
 pub const NE_BASIN_MIN_ELEVATION: f32 = NORTH_DESERT_WIDTH_MILES;
 // pub const NE_BASIN_MIN_ELEVATION: f32 = BOUNDARY_ELEVATION;
 
-pub const KC: f32 = 1.5; // capacity coefficient
+pub const KC: f32 = 0.7; // capacity coefficient
 pub const KE: f32 = 0.01; // erosion rate fraction
                           // Experimentally, a KD of 0.01 results in even filling of large lakes.
                           // Too high a value may result in water sloshing back and forth drilling
