@@ -719,26 +719,6 @@ fn simulate_erosion(
                 target_delta_hex.water_depth,
                 target_delta_hex.suspended_load,
             );
-            println!(
-                "  total land (above sea level): {:.3} ft  net land: {:.3} ft  total sediment: {:.3} ft",
-                total_land, net_land, total_sediment
-            );
-            println!(
-                "  land: max {:.3} ft ({:.3}, {:.1}%)  avg {:.3} ft ({:.3}, {:.1}%)  min {:.3} ft",
-                max_elevation - current_sea_level,
-                initial_max_elevation,
-                (max_elevation - current_sea_level) / initial_max_elevation * 100.0,
-                avg_elevation,
-                initial_avg_elevation,
-                avg_elevation / initial_avg_elevation * 100.0,
-                min_elevation - current_sea_level,
-            );
-            println!(
-                "  regional avg: north {:.1} ft ({:.1}%)  central {:.1} ft ({:.1}%)  south {:.1} ft ({:.1}%)",
-                north_avg, north_avg / initial_north_avg * 100.0,
-                central_avg, central_avg / initial_central_avg * 100.0,
-                south_avg, south_avg / initial_south_avg * 100.0,
-            );
 
             // Find westernmost continental hex for y < MIN_NORTH_DESERT_HEIGHT
             let westernmost_north_continental_x: Option<usize> = {
@@ -762,6 +742,28 @@ fn simulate_erosion(
                     hexes_west_of_outlet
                 );
             }
+
+            println!(
+                "  total land (above sea level): {:.3} ft  net land: {:.3} ft  total sediment: {:.3} ft",
+                total_land, net_land, total_sediment
+            );
+            println!(
+                "  land: max {:.3} ft ({:.3}, {:.1}%)  avg {:.3} ft ({:.3}, {:.1}%)  min {:.3} ft",
+                max_elevation - current_sea_level,
+                initial_max_elevation,
+                (max_elevation - current_sea_level) / initial_max_elevation * 100.0,
+                avg_elevation,
+                initial_avg_elevation,
+                avg_elevation / initial_avg_elevation * 100.0,
+                min_elevation - current_sea_level,
+            );
+            println!(
+                "  regional avg: north {:.1} ft ({:.1}%)  central {:.1} ft ({:.1}%)  south {:.1} ft ({:.1}%)",
+                north_avg, north_avg / initial_north_avg * 100.0,
+                central_avg, central_avg / initial_central_avg * 100.0,
+                south_avg, south_avg / initial_south_avg * 100.0,
+            );
+
             println!(
                 "  sea:  max {:.3} ft  avg {:.3} ft ({:.3}, {:.1}%)  min {:.3} ft  time: {:?}",
                 max_sea_elevation - current_sea_level,
