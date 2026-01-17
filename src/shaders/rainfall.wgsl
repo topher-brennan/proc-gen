@@ -41,11 +41,16 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Realistically, evaporation should be proportional to the percentage of a hex
         // covered in water, but we don't actually track that. So we do a crude estimate
         // based on min_neigh and total water in the hex.
+        // TODO: Maybe this should look at land height, not water surface? Would require some refactoring.
         let height_diff = max((height(cell) - min_elev[index]), 0.0);
+        let total_water = total_water_depth(cell);
         var covered = 1.0;
         if (height_diff > 0.0) {
-            covered = clamp(total_water_depth(cell) / height_diff / 20.0, 0.0, 1.0);
+            covered = clamp(total_water / height_diff * 2.0, 0.0, 1.0);
         }
+
+        // Regardless of min_neigh, need at least 3 feet of water to fully cover a hex.
+        covered = clamp(covered, 0.0, total_water * total_water / 9.0);
         water_residual -= MAX_EVAPORATION_PER_YEAR * YEARS_PER_STEP * covered;
 
         // Add rainfall to residual
