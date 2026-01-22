@@ -14,13 +14,6 @@ struct Hex {
     uplift: f32,
 };
 
-struct Log {
-    eroded: f32,
-    deposited: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
 struct RuntimeParams {
     sea_level: f32,
 };
@@ -30,8 +23,6 @@ var<storage, read_write> hex_data: array<Hex>;
 @group(0) @binding(1)
 var<storage, read> min_elev: array<f32>;   // output from min_neigh pass
 @group(0) @binding(2)
-var<storage, read_write> erosion_log: array<Log>;
-@group(0) @binding(3)
 var<uniform> params: RuntimeParams;
 
 @compute @workgroup_size(256)
@@ -42,7 +33,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var cell = hex_data[index];
     var elevation_residual = cell.elevation_residual;
     var load_residual = cell.suspended_load_residual;
-    var log_entry: Log = Log(0.0, 0.0, 0.0, 0.0);
 
     // Slope and capacity
     let height_diff = max((height(cell) - min_elev[index]), 0.0);
@@ -63,8 +53,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         cell.suspended_load += load_adj;
         load_residual -= load_adj;
         cell.suspended_load_residual = load_residual;
-
-        log_entry.eroded = amount;
     } else {
         // deposit
         var amount = KD * (cell.suspended_load - capacity);
@@ -89,12 +77,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         cell.suspended_load_residual = load_residual;
-
-        log_entry.deposited = amount;
     }
-
-    let x = i32(index % u32(WIDTH));
-    let y = i32(index / u32(WIDTH));
 
     // if x > i32(BASIN_X_BOUNDARY) && y < i32(BASIN_Y_BOUNDARY) && cell.elevation < NE_BASIN_MIN_ELEVATION {
     //     cell.elevation = NE_BASIN_MIN_ELEVATION + params.sea_level;
@@ -102,5 +85,4 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     cell.elevation_residual += cell.uplift * (0.02 + KC * KE * cell.rainfall) * YEARS_PER_STEP;
 
     hex_data[index] = cell;
-    erosion_log[index] = log_entry;
 } 

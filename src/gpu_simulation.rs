@@ -58,15 +58,6 @@ pub struct HexGpu {
     pub uplift: f32,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct OutGpu {
-    pub water_out: f32,
-    pub sediment_out: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
-}
-
 pub struct GpuSimulation {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -99,8 +90,6 @@ pub struct GpuSimulation {
     ocean_bind_group_layout: wgpu::BindGroupLayout,
     ocean_bind_group: wgpu::BindGroup,
     ocean_params_buffer: wgpu::Buffer,
-    ocean_out_buffer: wgpu::Buffer,
-    erosion_log_buffer: wgpu::Buffer,
     // Repose
     delta_buffer: wgpu::Buffer,
     repose_pipeline: wgpu::ComputePipeline,
@@ -237,7 +226,7 @@ impl GpuSimulation {
 
         let rain_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Rainfall Params Buffer"),
-            size: std::mem::size_of::<f32>() as u64,
+            size: (2 * std::mem::size_of::<f32>()) as u64, // sea_level + seasonal_rain_multiplier
             usage: BU::UNIFORM | BU::COPY_DST,
             mapped_at_creation: false,
         });
@@ -347,8 +336,7 @@ impl GpuSimulation {
             entries: &[
                 buf_rw!(0, false),
                 buf_rw!(1, true),
-                buf_rw!(2, false),
-                uniform_entry!(3),
+                uniform_entry!(2),
             ],
         });
 
@@ -365,13 +353,6 @@ impl GpuSimulation {
             entry_point: "main",
         });
 
-        let erosion_log_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Erosion Log Buffer"),
-            size: 4u64,
-            usage: BU::STORAGE | BU::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let ocean_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Ocean Params Buffer"),
             size: std::mem::size_of::<f32>() as u64,
@@ -385,8 +366,7 @@ impl GpuSimulation {
             entries: &[
                 bg_entry!(0, &hex_buffer),
                 bg_entry!(1, &min_elev_buffer),
-                bg_entry!(2, &erosion_log_buffer),
-                bg_entry!(3, &ocean_params_buffer),
+                bg_entry!(2, &ocean_params_buffer),
             ],
         });
 
@@ -406,7 +386,7 @@ impl GpuSimulation {
         let ocean_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Ocean Boundary BGL"),
-                entries: &[buf_rw!(0, false), uniform_entry!(1), buf_rw!(2, false)],
+                entries: &[buf_rw!(0, false), uniform_entry!(1)],
             });
 
         let ocean_pipeline_layout =
@@ -423,20 +403,12 @@ impl GpuSimulation {
             entry_point: "main",
         });
 
-        let ocean_out_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ocean Out Buffer"),
-            size: 4u64,
-            usage: BU::STORAGE | BU::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let ocean_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Ocean Boundary BG"),
             layout: &ocean_bind_group_layout,
             entries: &[
                 bg_entry!(0, &hex_buffer),
                 bg_entry!(1, &ocean_params_buffer),
-                bg_entry!(2, &ocean_out_buffer),
             ],
         });
 
@@ -549,8 +521,6 @@ impl GpuSimulation {
             ocean_bind_group_layout,
             ocean_bind_group,
             ocean_params_buffer,
-            ocean_out_buffer,
-            erosion_log_buffer,
             delta_buffer,
             repose_pipeline,
             repose_bgl,
@@ -595,27 +565,12 @@ impl GpuSimulation {
             entries: &[bg_entry!(0, &self.hex_buffer)],
         });
 
-        self.ocean_out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ocean Out Buffer"),
-            size: (height * std::mem::size_of::<OutGpu>()) as u64,
-            usage: BU::STORAGE | BU::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        self.erosion_log_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Erosion Log Buffer"),
-            size: (width * height * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: BU::STORAGE | BU::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         self.ocean_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Ocean Boundary BG"),
             layout: &self.ocean_bind_group_layout,
             entries: &[
                 bg_entry!(0, &self.hex_buffer),
                 bg_entry!(1, &self.ocean_params_buffer),
-                bg_entry!(2, &self.ocean_out_buffer),
             ],
         });
 
@@ -721,8 +676,7 @@ impl GpuSimulation {
             entries: &[
                 bg_entry!(0, &self.hex_buffer),
                 bg_entry!(1, &self.min_elev_buffer),
-                bg_entry!(2, &self.erosion_log_buffer),
-                bg_entry!(3, &self.ocean_params_buffer),
+                bg_entry!(2, &self.ocean_params_buffer),
             ],
         });
 
@@ -746,64 +700,6 @@ impl GpuSimulation {
                 bg_entry!(3, &self.min_elev_buffer),
             ],
         });
-    }
-
-    pub fn download_ocean_outflows(&self, height: usize) -> Vec<OutGpu> {
-        let size_bytes = (height * std::mem::size_of::<OutGpu>()) as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ocean Outflow Staging"),
-            size: size_bytes,
-            usage: BU::MAP_READ | BU::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Ocean Outflow DL"),
-            });
-        encoder.copy_buffer_to_buffer(&self.ocean_out_buffer, 0, &staging, 0, size_bytes);
-        self.queue.submit(std::iter::once(encoder.finish()));
-        let slice = staging.slice(..);
-        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        pollster::block_on(rx.receive()).unwrap().unwrap();
-        let data = slice.get_mapped_range();
-        let vec: Vec<OutGpu> = bytemuck::cast_slice(&data).to_vec();
-        drop(data);
-        staging.unmap();
-        vec
-    }
-
-    pub fn download_erosion_log(&self, width: usize, height: usize) -> Vec<[f32; 4]> {
-        let size_bytes = (width * height * std::mem::size_of::<[f32; 4]>()) as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Erosion Log Staging"),
-            size: size_bytes,
-            usage: BU::MAP_READ | BU::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Erosion Log DL"),
-            });
-        encoder.copy_buffer_to_buffer(&self.erosion_log_buffer, 0, &staging, 0, size_bytes);
-        self.queue.submit(std::iter::once(encoder.finish()));
-        let slice = staging.slice(..);
-        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        pollster::block_on(rx.receive()).unwrap().unwrap();
-        let data = slice.get_mapped_range();
-        let vec: Vec<[f32; 4]> = bytemuck::cast_slice(&data).to_vec();
-        drop(data);
-        staging.unmap();
-        vec
     }
 
     pub fn run_repose_pass(&self, _width: usize, _height: usize) {
@@ -847,7 +743,7 @@ impl GpuSimulation {
         self.queue.write_buffer(
             &self.rain_params_buffer,
             0,
-            bytemuck::cast_slice(&[seasonal_rain_multiplier]),
+            bytemuck::cast_slice(&[sea_level, seasonal_rain_multiplier]),
         );
         self.queue.write_buffer(
             &self.ocean_params_buffer,

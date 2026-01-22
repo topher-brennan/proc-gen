@@ -9,13 +9,13 @@ const HEX_FACTOR: f32 = 0.8660254;
 const FLOW_FACTOR: f32 = 0.9;
 const MAX_FLOW: f32 = 2640.0;
 
-const KC: f32 = 0.7;
+const KC: f32 = 0.5;
 const KE: f32 = 0.01;
 const KD: f32 = 0.01;
 const MAX_SLOPE: f32 = 1.0;
 const MAX_ELEVATION: f32 = 16900.0;
 
-const YEARS_PER_STEP: f32 = 0.00022815912;
+const YEARS_PER_STEP: f32 = 0.000001901326;
 const MAX_EVAPORATION_PER_YEAR: f32 = 2.0;
 const BASIN_X_BOUNDARY: f32 = 4203.0;
 const BASIN_Y_BOUNDARY: f32 = 897.0;

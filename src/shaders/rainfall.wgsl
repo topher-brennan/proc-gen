@@ -14,6 +14,7 @@ struct Hex {
 
 // Runtime uniform - changes each frame
 struct RuntimeParams {
+    sea_level: f32,
     seasonal_rain_multiplier: f32,
 }
 
@@ -46,11 +47,12 @@ fn add_rainfall(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let total_water = total_water_depth(cell);
         var covered = 1.0;
         if (height_diff > 0.0) {
-            covered = clamp(total_water / height_diff * 2.0, 0.0, 1.0);
+            covered = clamp(total_water / height_diff / 2.0, 0.0, 1.0);
         }
 
         // Regardless of min_neigh, need at least 3 feet of water to fully cover a hex.
         covered = clamp(covered, 0.0, total_water * total_water / 9.0);
+
         water_residual -= MAX_EVAPORATION_PER_YEAR * YEARS_PER_STEP * covered;
 
         // Add rainfall to residual

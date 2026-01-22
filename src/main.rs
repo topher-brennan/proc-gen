@@ -123,10 +123,10 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
         }
     } else if elevation < BASE_SEA_LEVEL {
         let normalized_elevation = elevation / HIGH_WATER_THRESHOLD;
-        // Green to light blue
+        // Green to dark green
         let red = 0;
-        let green = 255;
-        let blue = (255.0 * (1.0 + normalized_elevation)) as u8;
+        let green = (255.0 * (1.0 + normalized_elevation / 2.0)) as u8;
+        let blue = 0;
         Rgb([red, green, blue])
     } else {
         // Land: green -> yellow -> orange -> red -> brown -> white
@@ -772,17 +772,6 @@ fn simulate_erosion(
                 sea_avg_elevation / initial_sea_avg_elevation * 100.0,
                 min_sea_elevation - current_sea_level,
                 total_elapsed,
-            );
-
-            let outflows = gpu_sim.download_ocean_outflows(height);
-            let total_water_out: f64 = outflows.iter().map(|o| o.water_out as f64).sum();
-            let total_sed_out: f64 = outflows.iter().map(|o| o.sediment_out as f64).sum();
-            let eros_log = gpu_sim.download_erosion_log(width, height);
-            let total_eroded: f64 = eros_log.iter().map(|e| e[0] as f64).sum();
-            let total_deposited: f64 = eros_log.iter().map(|e| e[1] as f64).sum();
-            println!(
-                "  diagnostics: water_out {:.3}  sed_out {:.3}  eroded {:.3}  deposited {:.3}",
-                total_water_out, total_sed_out, total_eroded, total_deposited
             );
 
             let mut frame_buffer = vec![0u32; (WIDTH_PIXELS as usize) * (HEIGHT_PIXELS as usize)];
@@ -2147,7 +2136,7 @@ fn main() {
         eprintln!("Warning: Failed to save terrain.png: {}", e);
     }
     if let Err(e) = save_simulation_state_csv(
-        "terrain_final.csv",
+        "terrain.csv",
         &hex_map,
         seed,
         final_step,
@@ -2160,7 +2149,7 @@ fn main() {
         initial_south_avg,
         final_elapsed_secs,
     ) {
-        eprintln!("Warning: Failed to save terrain_final.csv: {}", e);
+        eprintln!("Warning: Failed to save terrain.csv: {}", e);
     }
 
     let save_duration = png_start.elapsed();

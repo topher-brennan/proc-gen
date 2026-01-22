@@ -21,6 +21,8 @@ cargo run --release -- --rounds 10000 --seed 4064140151
 
 # Multi-Stage Simulation:
 
+I'm actively experimenting with the details, but I'm thinking I may eventually do something like this:
+
 Simulating ~20,000 years in three stages:
 * 10,000 rounds at 7 steps per day: ~17342 years
 * 10,000 rounds at (24*2) steps per day: ~2529 years
