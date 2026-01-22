@@ -105,6 +105,9 @@ pub const DEFAULT_ROUNDS: u32 = 1_000;
 pub const LOW_WATER_THRESHOLD: f32 = 1.0 / 12.0; // Feet
 pub const HIGH_WATER_THRESHOLD: f32 = 6.0; // Feet
 
+pub const SWAMP_THRESHOLD: f32 = -6.0;
+pub const REEF_THRESHOLD: f32 = -200.0;
+
 pub const MAX_SLOPE: f32 = 1.0;
 pub const MAX_FLOW: f32 = (HEX_SIZE as f32) * MAX_SLOPE;
 // Current highest of all max elevation constants.

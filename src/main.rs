@@ -108,9 +108,9 @@ fn hex_distance_pythagorean(x1: i32, y1: i32, x2: i32, y2: i32) -> f32 {
 }
 
 fn elevation_to_color(elevation: f32) -> Rgb<u8> {
-    if elevation < -1.0 * HIGH_WATER_THRESHOLD {
+    if elevation < SWAMP_THRESHOLD {
         let normalized_elevation =
-            ((elevation + HIGH_WATER_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH) / (HIGH_WATER_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
+            ((elevation + SWAMP_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH) / (SWAMP_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
         if normalized_elevation < 0.0 {
             // Black, to mark where errosion has lowered elevation below the lowest possible initial elevation.
             Rgb([0, 0, 0])
@@ -121,11 +121,19 @@ fn elevation_to_color(elevation: f32) -> Rgb<u8> {
             let blue = 255;
             Rgb([red, green, blue])
         }
+    // TODO: Find a nice way of marking elevations on the order of a few hundred feet below sea level.
+    // } else if elevation < SWAMP_THRESHOLD {
+    //     let normalized_elevation = ((elevation - SWAMP_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH) / (BASE_SEA_LEVEL - SWAMP_THRESHOLD - ABYSSAL_PLAINS_MAX_DEPTH)).min(1.0);
+    //     // Coral to dark green
+    //     let red = (255.0 * (1.0 - normalized_elevation)) as u8;
+    //     let green = (255.0 / 2.0) as u8;
+    //     let blue = (255.0 / 2.0 * (1.0 - normalized_elevation)) as u8;
+    //     Rgb([red, green, blue])
     } else if elevation < BASE_SEA_LEVEL {
-        let normalized_elevation = elevation / HIGH_WATER_THRESHOLD;
+        let normalized_elevation = elevation / SWAMP_THRESHOLD;
         // Green to dark green
         let red = 0;
-        let green = (255.0 * (1.0 + normalized_elevation / 2.0)) as u8;
+        let green = (255.0 * (1.0 - normalized_elevation / 2.0)) as u8;
         let blue = 0;
         Rgb([red, green, blue])
     } else {
